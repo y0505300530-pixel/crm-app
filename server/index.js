@@ -171,7 +171,18 @@ async function handler(req, res) {
         items: body.items || [{ sku: "DRY-RUN", name: "CRM dry-run", qty: 1, amount: "20.00" }],
         card: { name: "Beverly Brower", number: cards[scenario] || cards.soft, month: "12", year: "28", cvv: "123" },
         notes: `CRM dry-run scenario=${scenario}`,
-      }, { store, adapters });
+      }, {
+        store,
+        adapters,
+        settings: {
+          killSwitchPsp: null,
+          processors: [
+            { id: "umg", label: "UMG", enabled: true, priority: 1, mode: "sandbox" },
+            { id: "tagada", label: "Tagada", enabled: true, priority: 2, mode: "sandbox" },
+            { id: "centrobill", label: "Centrobill", enabled: true, priority: 3, mode: "sandbox" },
+          ],
+        },
+      });
       return json(res, 200, result);
     }
 

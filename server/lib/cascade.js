@@ -84,7 +84,7 @@ export function resolveQueue(settings) {
 export async function chargeCart(input, deps) {
   const store = deps.store;
   const adapters = deps.adapters || ADAPTERS;
-  const settings = store.getSettings();
+  const settings = deps.settings || store.getSettings();
   const key = String(input.idempotencyKey || input.extOrderId || "").trim();
   if (!key) {
     return { ok: false, error: "idempotency_key_required" };
