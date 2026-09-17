@@ -81,6 +81,16 @@ async function handler(req, res) {
       });
     }
 
+    if (path === "/api/psp/health" && req.method === "GET") {
+      return json(res, 200, {
+        ok: true,
+        service: "crm-umg",
+        dryRun: DRY_RUN,
+        callbackUrl: callbackUrl(),
+        ...secretHealth(),
+      });
+    }
+
     if (path === "/api/psp/settings" && req.method === "GET") {
       return json(res, 200, {
         settings: store.getSettings(),

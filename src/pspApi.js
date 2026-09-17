@@ -4,7 +4,7 @@ const json = async (res) => {
 };
 
 export async function fetchHealth() {
-  const res = await fetch("/api/health");
+  const res = await fetch("/api/psp/health");
   return json(res);
 }
 
