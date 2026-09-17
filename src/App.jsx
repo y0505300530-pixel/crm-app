@@ -1,4 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import ProcessorSettings from "./ProcessorSettings.jsx";
+import StoreOrders from "./StoreOrders.jsx";
 
 const USERS = [
   { email: "sophia@blitz-affiliates.marketing", password: "Odessa2020", name: "Sophia" },
@@ -231,6 +233,7 @@ function GroupHeader({ icon, title, count, total, accentColor, defaultOpen, chil
 /* ── Dashboard ── */
 function Dashboard({ user, onLogout }) {
   const now = new Date();
+  const [view, setView] = useState("paytrack");
   const [month, setMonth] = useState(now.getMonth());
   const [year, setYear] = useState(now.getFullYear());
   const [payments, setPayments] = useState(INITIAL);
@@ -238,6 +241,7 @@ function Dashboard({ user, onLogout }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editPay, setEditPay] = useState(null);
   const [delConfirm, setDelConfirm] = useState(null);
+  const isAdmin = user.email === "y0505300530@gmail.com";
 
   const matchSearch = p => {
     if (!search) return true;
@@ -285,7 +289,21 @@ function Dashboard({ user, onLogout }) {
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 32px", borderBottom: "1px solid rgba(148,163,184,0.1)", background: "rgba(15,23,42,0.85)", backdropFilter: "blur(12px)", position: "sticky", top: 0, zIndex: 100 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           {I.logo}
-          <span style={{ fontFamily: "'Space Mono',monospace", fontWeight: 700, fontSize: 18, letterSpacing: -0.3 }}>PayTrack</span>
+          <span style={{ fontFamily: "'Space Mono',monospace", fontWeight: 700, fontSize: 18, letterSpacing: -0.3 }}>BioLabs CRM</span>
+          <div style={{ display: "flex", gap: 6, marginLeft: 18 }}>
+            {[
+              ["paytrack", "Affiliate PayTrack"],
+              ["orders", "Store orders"],
+              ["processors", "Processors"],
+            ].map(([id, label]) => (
+              <button key={id} onClick={() => setView(id)} style={{
+                padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600,
+                border: view === id ? "1px solid rgba(56,189,248,0.35)" : "1px solid transparent",
+                background: view === id ? "rgba(56,189,248,0.12)" : "transparent",
+                color: view === id ? "#38BDF8" : "#94A3B8",
+              }}>{label}</button>
+            ))}
+          </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
           <div style={{ padding: "5px 14px", borderRadius: 20, background: "rgba(56,189,248,0.1)", border: "1px solid rgba(56,189,248,0.2)", fontSize: 13, color: "#38BDF8", fontWeight: 500 }}>{user.name}</div>
@@ -296,7 +314,17 @@ function Dashboard({ user, onLogout }) {
         </div>
       </header>
 
-      <main style={{ maxWidth: 1240, margin: "0 auto", padding: "28px 32px" }}>
+      {view === "orders" && (
+        <main style={{ maxWidth: 1240, margin: "0 auto", padding: "28px 32px" }}>
+          <StoreOrders isAdmin={isAdmin} />
+        </main>
+      )}
+      {view === "processors" && (
+        <main style={{ maxWidth: 1240, margin: "0 auto", padding: "28px 32px" }}>
+          <ProcessorSettings isAdmin={isAdmin} />
+        </main>
+      )}
+      {view === "paytrack" && <main style={{ maxWidth: 1240, margin: "0 auto", padding: "28px 32px" }}>
         {/* Top bar */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -346,7 +374,7 @@ function Dashboard({ user, onLogout }) {
         <GroupHeader icon={I.calendar} title={`Paid — ${MONTHS[month]} ${year}`} count={paidPayments.length} total={paidTotal} accentColor="#10B981" defaultOpen={true}>
           <PaymentTable payments={paidPayments} onEdit={p => { setEditPay(p); setModalOpen(true); }} onDelete={id => setDelConfirm(id)} emptyMsg={`No paid payments for ${MONTHS[month]} ${year}`} />
         </GroupHeader>
-      </main>
+      </main>}
 
       {/* Modals */}
       {modalOpen && (
@@ -389,9 +417,9 @@ function LoginScreen({ onLogin }) {
       <div style={{ width: 420, background: "linear-gradient(180deg,#1E293B,#172033)", borderRadius: 20, border: "1px solid rgba(56,189,248,0.15)", padding: "48px 40px", boxShadow: "0 25px 80px rgba(0,0,0,0.5)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
           {I.logo}
-          <span style={{ fontFamily: "'Space Mono',monospace", fontWeight: 700, fontSize: 22, color: "#F1F5F9" }}>PayTrack</span>
+          <span style={{ fontFamily: "'Space Mono',monospace", fontWeight: 700, fontSize: 22, color: "#F1F5F9" }}>BioLabs CRM</span>
         </div>
-        <p style={{ color: "#64748B", fontSize: 14, marginBottom: 36, marginTop: 4 }}>Payment Management CRM</p>
+        <p style={{ color: "#64748B", fontSize: 14, marginBottom: 36, marginTop: 4 }}>Affiliate PayTrack + store clearing</p>
         <form onSubmit={submit}>
           <label style={{ display: "block", color: "#94A3B8", fontSize: 12, fontWeight: 600, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>Email</label>
           <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.com"

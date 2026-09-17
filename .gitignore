@@ -1,0 +1,13 @@
+# Secrets — never commit
+.env
+.env.*
+*.env
+umg.env
+!server/data/.gitkeep
+
+# Runtime store (clearing data lives on the CRM host)
+server/data/*.json
+
+# Logs / OS
+*.log
+.DS_Store
