@@ -1,6 +1,7 @@
 # UMG sidecar on the live BioLabs CRM host
 
-Merged `crm-app` `main` SHA this doc matches: **`bb1af15e26e7b0609bcdd342321259579898b621`**.
+Adapter merge (PR #1): **`bb1af15e26e7b0609bcdd342321259579898b621`**.  
+Sidecar deploy doc landed on `main` as **`0721137`** (or a later commit that contains `docs/UMG_SIDECAR_DEPLOY.md`).
 
 This repo is **not** the live CRM. Do **not** replace `/opt/crm-api` or `/var/www/mastersol/html/CRM`.
 
@@ -26,7 +27,7 @@ sudo git fetch origin main
 sudo git checkout main
 sudo git pull --ff-only origin main
 git rev-parse HEAD
-# expect: bb1af15e26e7b0609bcdd342321259579898b621
+# must include 0721137 (sidecar deploy) or later: git merge-base --is-ancestor 0721137 HEAD && echo ok
 ```
 
 If the directory already exists, only `fetch` / `checkout main` / `pull --ff-only`.
