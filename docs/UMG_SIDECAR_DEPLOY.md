@@ -67,7 +67,9 @@ Environment=PORT=8787
 Environment=CRM_PUBLIC_URL=https://crm.biolabsresearch.co
 Environment=STORE_PATH=/var/lib/crm-umg/store.json
 Environment=UMG_ENV_PATH=/root/secure-quarantine-20260917-audit/umg.env
+Environment=PAYMENTS_ENABLED=false
 # Do not put UMG_API_SECRET in this file. Do not set UMG_DRY_RUN=1.
+# Quote mode is the storefront SoT. Set PAYMENTS_ENABLED=true only when card capture is unlocked.
 ExecStart=/usr/bin/node /opt/crm-umg/server/index.js
 Restart=on-failure
 RestartSec=2
@@ -127,7 +129,8 @@ If `$forwarded_for_value` is not defined on this host, use `$proxy_add_x_forward
 
 | Public path | Sidecar | Why |
 |---|---|---|
-| `/api/checkout/charge` | yes | future storefront hook (Indian) |
+| `/api/checkout/quote` | yes | storefront SoT while payments are off — see [QUOTE_MODE.md](./QUOTE_MODE.md) |
+| `/api/checkout/charge` | yes | UMG cascade, gated by `PAYMENTS_ENABLED` (default **false** → HTTP 503) |
 | `/api/webhooks/umg` | yes | UMG portal callback |
 | `/api/psp/health` | yes | sidecar health (not `/api/health`) |
 | `/api/psp/settings` | yes | Processors UI |
