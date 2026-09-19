@@ -42,11 +42,13 @@ Do **not** send card / PAN / CVV. Quote rejects a `card` object with HTTP 400 `c
   "items": [
     { "sku": "BL-PEP-001", "name": "Research peptide A", "qty": 2, "amount": "79.00" }
   ],
-  "notes": "optional"
+  "notes": "optional",
+  "session_id": "bl-sess-<same-id-as-abandon-beacon>"
 }
 ```
 
-Aliases accepted: `firstName` / `lastName`, `quantity` on items, `extOrderId` as idempotency key.
+Aliases accepted: `firstName` / `lastName`, `quantity` on items, `extOrderId` as idempotency key.  
+Optional `session_id` links a prior abandoned-checkout beacon (CRM conversion only — see [ABANDONED_CHECKOUT.md](./ABANDONED_CHECKOUT.md)). Quote UX is unchanged.
 
 **Success (200)**
 

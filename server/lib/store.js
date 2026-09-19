@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 export const PROCESSOR_IDS = ["umg", "tagada", "centrobill"];
+export const ABANDONED_MAX = 500;
 
 export function defaultSettings() {
   return {
@@ -15,7 +16,37 @@ export function defaultSettings() {
 }
 
 function emptyData() {
-  return { settings: defaultSettings(), orders: [], quotes: [], seq: 1000, quoteSeq: 5000 };
+  return {
+    settings: defaultSettings(),
+    orders: [],
+    quotes: [],
+    abandoned_checkouts: {},
+    seq: 1000,
+    quoteSeq: 5000,
+    abandonedDigestAt: null,
+  };
+}
+
+function asAbandonedMap(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value;
+}
+
+function trimAbandonedMap(map, max, keepId) {
+  const keys = Object.keys(map);
+  if (keys.length <= max) return;
+  const sorted = keys.sort((a, b) => {
+    const ta = map[a]?.last_seen || map[a]?.seen_at || "";
+    const tb = map[b]?.last_seen || map[b]?.seen_at || "";
+    return String(ta).localeCompare(String(tb));
+  });
+  let drop = keys.length - max;
+  for (const key of sorted) {
+    if (drop <= 0) break;
+    if (key === keepId) continue;
+    delete map[key];
+    drop -= 1;
+  }
 }
 
 function clone(value) {
@@ -34,8 +65,10 @@ export function createStore(opts = {}) {
         settings: { ...defaultSettings(), ...(parsed.settings || {}) },
         orders: Array.isArray(parsed.orders) ? parsed.orders : [],
         quotes: Array.isArray(parsed.quotes) ? parsed.quotes : [],
+        abandoned_checkouts: asAbandonedMap(parsed.abandoned_checkouts),
         seq: Number(parsed.seq) || 1000,
         quoteSeq: Number(parsed.quoteSeq) || 5000,
+        abandonedDigestAt: parsed.abandonedDigestAt || null,
       };
       if (!Array.isArray(data.settings.processors) || data.settings.processors.length === 0) {
         data.settings.processors = defaultSettings().processors;
@@ -159,6 +192,66 @@ export function createStore(opts = {}) {
     },
     snapshot() {
       return clone(data);
+    },
+    listAbandonedCheckouts() {
+      const map = asAbandonedMap(data.abandoned_checkouts);
+      return Object.values(clone(map)).sort((a, b) =>
+        String(b.last_seen || b.seen_at || "").localeCompare(String(a.last_seen || a.seen_at || "")),
+      );
+    },
+    getAbandonedCheckout(sessionId) {
+      const sid = String(sessionId || "").trim();
+      if (!sid) return null;
+      const row = asAbandonedMap(data.abandoned_checkouts)[sid];
+      return row ? clone(row) : null;
+    },
+    upsertAbandonedCheckout(record, opts = {}) {
+      if (!data.abandoned_checkouts || typeof data.abandoned_checkouts !== "object" || Array.isArray(data.abandoned_checkouts)) {
+        data.abandoned_checkouts = {};
+      }
+      const sid = String(record?.session_id || "").trim();
+      if (!sid) return null;
+      const prev = data.abandoned_checkouts[sid];
+      const now = record.last_seen || record.seen_at || new Date().toISOString();
+      const next = {
+        session_id: sid,
+        stage: record.stage != null ? String(record.stage) : (prev?.stage || ""),
+        customer: record.customer && typeof record.customer === "object" ? clone(record.customer) : (prev?.customer || {}),
+        items: Array.isArray(record.items) ? clone(record.items) : (prev?.items || []),
+        subtotal: record.subtotal != null ? record.subtotal : (prev?.subtotal ?? "0.00"),
+        coupon: record.coupon !== undefined ? clone(record.coupon) : (prev?.coupon ?? null),
+        client_timestamp: record.client_timestamp !== undefined ? record.client_timestamp : (prev?.client_timestamp ?? null),
+        first_seen: prev?.first_seen || now,
+        last_seen: now,
+        seen_at: now,
+        status: prev?.status === "converted" ? "converted" : "open",
+        converted_at: prev?.converted_at || null,
+        converted_via: prev?.converted_via || null,
+        converted_id: prev?.converted_id || null,
+      };
+      data.abandoned_checkouts[sid] = next;
+      const max = Number(opts.max) > 0 ? Number(opts.max) : ABANDONED_MAX;
+      trimAbandonedMap(data.abandoned_checkouts, max, sid);
+      persist();
+      return clone(next);
+    },
+    markAbandonedConverted(sessionId, meta = {}) {
+      const sid = String(sessionId || "").trim();
+      if (!sid) return null;
+      if (!data.abandoned_checkouts || typeof data.abandoned_checkouts !== "object") return null;
+      const row = data.abandoned_checkouts[sid];
+      if (!row) return null;
+      row.status = "converted";
+      row.converted_at = meta.converted_at || new Date().toISOString();
+      row.converted_via = meta.via || meta.converted_via || "checkout";
+      row.converted_id = meta.id || meta.converted_id || null;
+      persist();
+      return clone(row);
+    },
+    touchAbandonedDigest(at = new Date().toISOString()) {
+      data.abandonedDigestAt = at;
+      persist();
+      return data.abandonedDigestAt;
     },
   };
 }

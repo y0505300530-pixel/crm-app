@@ -40,3 +40,8 @@ export async function runDryRun(scenario) {
   });
   return json(res);
 }
+
+export async function fetchAbandonedCheckouts() {
+  const res = await fetch("/api/checkout/abandon");
+  return json(res);
+}

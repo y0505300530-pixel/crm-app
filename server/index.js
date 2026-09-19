@@ -12,6 +12,15 @@ import * as centrobill from "./lib/processors/centrobill.js";
 import { isPaymentsEnabled, paymentsDisabledBody, paymentsMode } from "./lib/payments.js";
 import { createQuote } from "./lib/quote.js";
 import { sendQuoteNotification } from "./lib/mail.js";
+import {
+  clientIp,
+  createRateLimiter,
+  isAbandonDigestEnabled,
+  markConvertedBySession,
+  normalizeAbandonPayload,
+  sendAbandonedDigest,
+  upsertAbandonedLead,
+} from "./lib/abandon.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -59,10 +68,39 @@ function callbackUrl() {
   return PUBLIC_URL ? `${PUBLIC_URL}${path}` : path;
 }
 
+function noContent(res) {
+  res.writeHead(204, {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, X-CRM-Role",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
+    "Cache-Control": "no-store",
+  });
+  res.end();
+}
+
+function readBodySilent(req) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      const raw = Buffer.concat(chunks).toString("utf8");
+      if (!raw) return resolve({ ok: true, body: {} });
+      try {
+        resolve({ ok: true, body: JSON.parse(raw) });
+      } catch {
+        resolve({ ok: false, invalidJson: true });
+      }
+    });
+    req.on("error", () => resolve({ ok: false }));
+  });
+}
+
 export function createHandler(deps = {}) {
   const db = deps.store || store;
   const sendQuoteEmail = deps.sendQuoteEmail || sendQuoteNotification;
   const resolveAdapters = () => deps.adapters || liveAdapters();
+  const abandonLimiter = deps.abandonLimiter || createRateLimiter();
+  const sendAbandonDigest = deps.sendAbandonDigest || sendAbandonedDigest;
 
   return async function handler(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
@@ -141,6 +179,12 @@ export function createHandler(deps = {}) {
       }
       const body = await readBody(req);
       const result = await chargeCart(body, { store: db, adapters: resolveAdapters() });
+      if (result.ok) {
+        markConvertedBySession(db, body.session_id || body.sessionId, {
+          via: "charge",
+          id: result.order?.id || null,
+        });
+      }
       return json(res, result.ok ? 200 : 402, result);
     }
 
@@ -150,11 +194,45 @@ export function createHandler(deps = {}) {
       if (!result.ok) {
         return json(res, result.status || 400, { ok: false, error: result.error });
       }
+      markConvertedBySession(db, body.session_id || body.sessionId, {
+        via: "quote",
+        id: result.quoteId || null,
+      });
       return json(res, 200, {
         ok: true,
         quoteId: result.quoteId,
         message: result.message,
       });
+    }
+
+    if (path === "/api/checkout/abandon" && req.method === "GET") {
+      return json(res, 200, { abandoned_checkouts: db.listAbandonedCheckouts() });
+    }
+
+    if (path === "/api/checkout/abandon" && req.method === "POST") {
+      try {
+        const parsed = await readBodySilent(req);
+        if (!parsed.ok) return noContent(res);
+        if (!abandonLimiter.allow(clientIp(req))) return noContent(res);
+        const normalized = normalizeAbandonPayload(parsed.body);
+        if (!normalized.ok) {
+          if (normalized.silent) return noContent(res);
+          return json(res, normalized.status || 400, {
+            ok: false,
+            error: normalized.error,
+            message: normalized.message,
+          });
+        }
+        upsertAbandonedLead(db, normalized.record);
+        return noContent(res);
+      } catch {
+        return noContent(res);
+      }
+    }
+
+    if (path === "/api/psp/abandoned-digest" && req.method === "POST") {
+      const out = await sendAbandonDigest(db, deps.abandonDigestTransport);
+      return json(res, 200, out);
     }
 
     if (path === "/api/psp/dry-run" && req.method === "POST") {
@@ -264,6 +342,12 @@ export function startCrmServer(port = PORT, deps = {}) {
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
 if (isMain) {
   startPoller(store, { intervalMs: Number(process.env.UMG_POLL_MS || 30000), adapters: liveAdapters() });
+  if (isAbandonDigestEnabled()) {
+    const digestMs = Number(process.env.ABANDON_DIGEST_MS || 6 * 60 * 60 * 1000);
+    setInterval(() => {
+      sendAbandonedDigest(store).catch(() => {});
+    }, Number.isFinite(digestMs) && digestMs > 0 ? digestMs : 6 * 60 * 60 * 1000);
+  }
   const server = createServer(handler);
   server.listen(PORT, "0.0.0.0", () => {
     process.stdout.write(`crm-psp listening on :${PORT} mode=${paymentsMode()}\n`);
