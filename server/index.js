@@ -9,6 +9,9 @@ import { pollPending, startPoller } from "./lib/poller.js";
 import { createMockUmg } from "./lib/processors/umg.js";
 import * as tagada from "./lib/processors/tagada.js";
 import * as centrobill from "./lib/processors/centrobill.js";
+import { isPaymentsEnabled, paymentsDisabledBody, paymentsMode } from "./lib/payments.js";
+import { createQuote } from "./lib/quote.js";
+import { sendQuoteNotification } from "./lib/mail.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -24,8 +27,6 @@ function liveAdapters() {
   }
   return ADAPTERS;
 }
-
-startPoller(store, { intervalMs: Number(process.env.UMG_POLL_MS || 30000), adapters: liveAdapters() });
 
 function json(res, status, body) {
   const data = JSON.stringify(body);
@@ -58,7 +59,12 @@ function callbackUrl() {
   return PUBLIC_URL ? `${PUBLIC_URL}${path}` : path;
 }
 
-async function handler(req, res) {
+export function createHandler(deps = {}) {
+  const db = deps.store || store;
+  const sendQuoteEmail = deps.sendQuoteEmail || sendQuoteNotification;
+  const resolveAdapters = () => deps.adapters || liveAdapters();
+
+  return async function handler(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   const path = url.pathname.replace(/\/+$/, "") || "/";
 
@@ -82,48 +88,73 @@ async function handler(req, res) {
     }
 
     if (path === "/api/psp/health" && req.method === "GET") {
+      const enabled = isPaymentsEnabled();
       return json(res, 200, {
         ok: true,
         service: "crm-umg",
         dryRun: DRY_RUN,
         callbackUrl: callbackUrl(),
+        paymentsEnabled: enabled,
+        mode: paymentsMode(),
         ...secretHealth(),
       });
     }
 
     if (path === "/api/psp/settings" && req.method === "GET") {
       return json(res, 200, {
-        settings: store.getSettings(),
-        health: { ...secretHealth(), dryRun: DRY_RUN, callbackUrl: callbackUrl() },
+        settings: db.getSettings(),
+        health: {
+          ...secretHealth(),
+          dryRun: DRY_RUN,
+          callbackUrl: callbackUrl(),
+          paymentsEnabled: isPaymentsEnabled(),
+          mode: paymentsMode(),
+        },
       });
     }
 
     if (path === "/api/psp/settings" && req.method === "PUT") {
       const body = await readBody(req);
-      const settings = store.saveSettings(body.settings || body);
+      const settings = db.saveSettings(body.settings || body);
       return json(res, 200, { settings });
     }
 
     if (path === "/api/store-orders" && req.method === "GET") {
-      return json(res, 200, { orders: store.listOrders() });
+      return json(res, 200, { orders: db.listOrders() });
     }
 
     if (path.startsWith("/api/store-orders/") && req.method === "GET") {
       const id = decodeURIComponent(path.slice("/api/store-orders/".length));
-      const order = store.getOrder(id);
+      const order = db.getOrder(id);
       if (!order) return json(res, 404, { error: "not_found" });
       return json(res, 200, { order });
     }
 
     if (path === "/api/store-orders/poll" && req.method === "POST") {
-      const results = await pollPending(store, { adapters: liveAdapters() });
-      return json(res, 200, { results, orders: store.listOrders() });
+      const results = await pollPending(db, { adapters: resolveAdapters() });
+      return json(res, 200, { results, orders: db.listOrders() });
     }
 
     if (path === "/api/checkout/charge" && req.method === "POST") {
+      if (!isPaymentsEnabled()) {
+        return json(res, 503, paymentsDisabledBody());
+      }
       const body = await readBody(req);
-      const result = await chargeCart(body, { store, adapters: liveAdapters() });
+      const result = await chargeCart(body, { store: db, adapters: resolveAdapters() });
       return json(res, result.ok ? 200 : 402, result);
+    }
+
+    if (path === "/api/checkout/quote" && req.method === "POST") {
+      const body = await readBody(req);
+      const result = await createQuote(body, { store: db, sendQuoteEmail });
+      if (!result.ok) {
+        return json(res, result.status || 400, { ok: false, error: result.error });
+      }
+      return json(res, 200, {
+        ok: true,
+        quoteId: result.quoteId,
+        message: result.message,
+      });
     }
 
     if (path === "/api/psp/dry-run" && req.method === "POST") {
@@ -182,7 +213,7 @@ async function handler(req, res) {
         card: { name: "Beverly Brower", number: cards[scenario] || cards.soft, month: "12", year: "28", cvv: "123" },
         notes: `CRM dry-run scenario=${scenario}`,
       }, {
-        store,
+        store: db,
         adapters,
         settings: {
           killSwitchPsp: null,
@@ -198,15 +229,15 @@ async function handler(req, res) {
 
     if (path === "/api/webhooks/umg" && req.method === "POST") {
       const body = await readBody(req);
-      return json(res, 200, handleProcessorWebhook(store, "umg", body));
+      return json(res, 200, handleProcessorWebhook(db, "umg", body));
     }
     if (path === "/api/webhooks/tagada" && req.method === "POST") {
       const body = await readBody(req);
-      return json(res, 200, handleProcessorWebhook(store, "tagada", body));
+      return json(res, 200, handleProcessorWebhook(db, "tagada", body));
     }
     if (path === "/api/webhooks/centrobill" && req.method === "POST") {
       const body = await readBody(req);
-      return json(res, 200, handleProcessorWebhook(store, "centrobill", body));
+      return json(res, 200, handleProcessorWebhook(db, "centrobill", body));
     }
 
     if (path === "/" || path === "/api") {
@@ -218,10 +249,13 @@ async function handler(req, res) {
     const message = err?.message === "invalid_json" ? "invalid_json" : "server_error";
     return json(res, message === "invalid_json" ? 400 : 500, { error: message });
   }
+  };
 }
 
-export function startCrmServer(port = PORT) {
-  const server = createServer(handler);
+const handler = createHandler();
+
+export function startCrmServer(port = PORT, deps = {}) {
+  const server = createServer(createHandler(deps));
   return new Promise((resolve) => {
     server.listen(port, "127.0.0.1", () => resolve(server));
   });
@@ -229,8 +263,9 @@ export function startCrmServer(port = PORT) {
 
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
 if (isMain) {
+  startPoller(store, { intervalMs: Number(process.env.UMG_POLL_MS || 30000), adapters: liveAdapters() });
   const server = createServer(handler);
   server.listen(PORT, "0.0.0.0", () => {
-    process.stdout.write(`crm-psp listening on :${PORT}\n`);
+    process.stdout.write(`crm-psp listening on :${PORT} mode=${paymentsMode()}\n`);
   });
 }

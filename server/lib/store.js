@@ -15,7 +15,7 @@ export function defaultSettings() {
 }
 
 function emptyData() {
-  return { settings: defaultSettings(), orders: [], seq: 1000 };
+  return { settings: defaultSettings(), orders: [], quotes: [], seq: 1000, quoteSeq: 5000 };
 }
 
 function clone(value) {
@@ -33,7 +33,9 @@ export function createStore(opts = {}) {
       data = {
         settings: { ...defaultSettings(), ...(parsed.settings || {}) },
         orders: Array.isArray(parsed.orders) ? parsed.orders : [],
+        quotes: Array.isArray(parsed.quotes) ? parsed.quotes : [],
         seq: Number(parsed.seq) || 1000,
+        quoteSeq: Number(parsed.quoteSeq) || 5000,
       };
       if (!Array.isArray(data.settings.processors) || data.settings.processors.length === 0) {
         data.settings.processors = defaultSettings().processors;
@@ -96,6 +98,33 @@ export function createStore(opts = {}) {
       data.seq += 1;
       persist();
       return `BLR-${data.seq}`;
+    },
+    listQuotes() {
+      return clone(data.quotes || []).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+    },
+    getQuote(id) {
+      const quote = (data.quotes || []).find((q) => q.id === id);
+      return quote ? clone(quote) : null;
+    },
+    getQuoteByIdempotency(key) {
+      if (!key) return null;
+      const quote = (data.quotes || []).find((q) => q.idempotencyKey === key);
+      return quote ? clone(quote) : null;
+    },
+    nextQuoteId() {
+      data.quoteSeq = Number(data.quoteSeq) || 5000;
+      data.quoteSeq += 1;
+      persist();
+      return `QT-${data.quoteSeq}`;
+    },
+    upsertQuote(quote) {
+      if (!Array.isArray(data.quotes)) data.quotes = [];
+      const idx = data.quotes.findIndex((q) => q.id === quote.id);
+      const copy = clone(quote);
+      if (idx === -1) data.quotes.push(copy);
+      else data.quotes[idx] = copy;
+      persist();
+      return clone(copy);
     },
     upsertOrder(order) {
       const idx = data.orders.findIndex((o) => o.id === order.id);

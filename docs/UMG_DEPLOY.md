@@ -18,4 +18,4 @@ Live CRM health: `GET /api/health` (v14.09 on :3001)
 
 Callback: `https://crm.biolabsresearch.co/api/webhooks/umg`
 
-Storefront stays v2.99a. Checkout hook (Indian) posts to `POST /api/checkout/charge`.
+Storefront stays v2.99a. Checkout hook (Indian) posts to `POST /api/checkout/quote` until `PAYMENTS_ENABLED=true`. See [QUOTE_MODE.md](./QUOTE_MODE.md).
