@@ -124,6 +124,7 @@ export async function chargeCart(input, deps) {
     }),
     items: Array.isArray(input.items) ? input.items : [],
     notes: input.notes || "",
+    session_id: String(input.session_id || input.sessionId || "").trim(),
     winningProcessor: null,
     winningTxnId: null,
     descriptor: null,

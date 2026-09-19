@@ -130,6 +130,7 @@ If `$forwarded_for_value` is not defined on this host, use `$proxy_add_x_forward
 | Public path | Sidecar | Why |
 |---|---|---|
 | `/api/checkout/quote` | yes | storefront SoT while payments are off — see [QUOTE_MODE.md](./QUOTE_MODE.md) |
+| `/api/checkout/abandon` | yes | abandoned-checkout beacon + CRM list — see [ABANDONED_CHECKOUT.md](./ABANDONED_CHECKOUT.md) |
 | `/api/checkout/charge` | yes | UMG cascade, gated by `PAYMENTS_ENABLED` (default **false** → HTTP 503) |
 | `/api/webhooks/umg` | yes | UMG portal callback |
 | `/api/psp/health` | yes | sidecar health (not `/api/health`) |
@@ -178,9 +179,10 @@ All paths are under **`/var/www/mastersol/html/CRM`** (served as `/crm/…`).
 
 | File | Change |
 |---|---|
-| `crm.js` | In the `STORE` nav `items` array (next to `store-orders`), add `{ key: 'processors', icon: '🏦', label: 'Processors', m: 1, admin: 1 }` and `{ key: 'psp-clearing', icon: '💳', label: 'PSP Clearing', m: 1 }`. Bump every `crm.js?v=` query on pages you touch. |
+| `crm.js` | In the `STORE` nav `items` array (next to `store-orders`), add `{ key: 'processors', icon: '🏦', label: 'Processors', m: 1, admin: 1 }`, `{ key: 'psp-clearing', icon: '💳', label: 'PSP Clearing', m: 1 }`, and `{ key: 'abandoned-checkout', icon: '🛒', label: 'Abandoned checkout', m: 1 }`. Bump every `crm.js?v=` query on pages you touch. |
 | `processors.html` | **New file.** Drop in `docs/live-crm/processors.html` from this repo. |
 | `psp-clearing.html` | **New file.** Drop in `docs/live-crm/psp-clearing.html`. |
+| `abandoned-checkout.html` | **New file.** Drop in `docs/live-crm/abandoned-checkout.html`. |
 | `store-orders.html` | Leave as-is (shop orders). Optional later: a “Clearing” link to `psp-clearing.html`. |
 | `store-settings.html` | Optional: one row “Card processors → /crm/processors.html”. Not required. |
 
@@ -189,6 +191,7 @@ Copy:
 ```bash
 sudo cp /opt/crm-umg/docs/live-crm/processors.html /var/www/mastersol/html/CRM/processors.html
 sudo cp /opt/crm-umg/docs/live-crm/psp-clearing.html /var/www/mastersol/html/CRM/psp-clearing.html
+sudo cp /opt/crm-umg/docs/live-crm/abandoned-checkout.html /var/www/mastersol/html/CRM/abandoned-checkout.html
 # then edit crm.js NAV as above; do not replace crm.js wholesale
 ```
 

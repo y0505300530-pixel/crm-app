@@ -136,6 +136,7 @@ export async function createQuote(input, deps) {
     customer: parsed.value.customer,
     items: parsed.value.items,
     notes: parsed.value.notes,
+    session_id: String(input.session_id || input.sessionId || "").trim(),
     emailSent: false,
     emailError: null,
   };
