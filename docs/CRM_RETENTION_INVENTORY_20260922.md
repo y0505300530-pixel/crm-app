@@ -60,7 +60,7 @@
 | Abandoned follow-up | **Partially** | Capture: `checkout-abandon.js` → `POST crm…/api/checkout/abandon` → UMG store; CIO readiness checks “Shop Abandonment” journey filter; digest code in `abandon.js` | Digest disabled (`ABANDON_DIGEST_ENABLED` off); `abandonedDigestAt=null`; all 13 abandons QA-like; CIO journey health not verified live in this audit |
 | Post-quote follow-up | **Partially** | Quote create + admin notify (`mail.js` → `admin@biolabsresearch.co`); CRM page stubs “Post-order follow-up” | No automated customer sequence after quote; all 21 quotes still `Not Contacted`; no CRM task/SLA engine |
 | Reorder / same items | **Does not** | Stub copy on Automations page only | No reorder journey, no “buy again”, no order-history UX |
-| Cross-sell after quote | **Does not** | — | No rules / recommendations / CIO campaign wired from quote events |
+| Cross-sell after quote | **Partially / Exists** | Cart “Add to this order” + PDP “Pairs well at the bench” | Storefront cross-sell is live; only the post-quote automated cross-sell journey is missing (no CIO campaign wired from quote events) |
 | Promo bar / campaigns | **Partially** | `promo-bar.js` stub; CRM Campaigns/Marketing pages; CIO broadcasts/newsletters (3 sent) | Storefront promo dead; campaign start/pause is CIO-side (CRM toasts) |
 | VIP / loyalty | **Partially** | Segment `mseg_vip` (1 email); UI gold cart burst “no VIP copy” | No points, tiers, VIP pricing, or enrollment path |
 | Customer account / order history | **Does not** | HEAD `/account` `/login` `/orders` = 404 | Never built on storefront |
