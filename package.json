@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "server": "node server/index.js",
-    "test": "node --test server/tests/*.test.js"
+    "test": "node --test server/tests/*.test.js",
+    "cleffo:soft-qa": "node server/scripts/cleffo-soft-qa.js"
   },
   "dependencies": {
     "react": "^18.2.0",

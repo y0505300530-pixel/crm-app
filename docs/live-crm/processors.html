@@ -62,7 +62,10 @@ async function load() {
       (h.umgSecretConfigured ? 'Loaded on server' : 'Not loaded') + '</span></div>' +
     '<div class="row"><span>Path</span><span class="muted">' + (h.umgEnvPath || '') + ' · ' + (h.source || '') + '</span></div>' +
     '<div class="row"><span>Callback</span><span>' + (h.callbackUrl || '/api/webhooks/umg') + '</span></div>' +
-    '<div class="muted">Value is never shown. Portal: https://crm.biolabsresearch.co/api/webhooks/umg</div>';
+    '<div class="muted">Value is never shown. Portal: https://crm.biolabsresearch.co/api/webhooks/umg</div>' +
+    '<div class="row"><span>Cleffo sandbox</span><span class="' + (h.cleffoSandboxConfigured ? 'ok' : 'warn') + '">' +
+      (h.cleffoSandboxConfigured ? 'Dev keys loaded' : 'Dev keys not loaded') + '</span></div>' +
+    '<div class="muted">Host ' + (h.cleffoSandboxHost || 'apis-dev.cleffo.com') + '. Checkout off. Soft-QA: npm run cleffo:soft-qa. Redirect is not success.</div>';
   const kill = document.getElementById('kill');
   kill.innerHTML = '';
   opt(kill, '', 'Off — use priority cascade');
@@ -75,14 +78,19 @@ async function load() {
   (settings.processors || []).forEach(function (p) {
     const card = document.createElement('div');
     card.className = 'settings-card';
+    const sandboxOnly = p.id === 'cleffo' || p.sandboxOnly;
+    const note = p.id === 'umg' ? 'live adapter' : (sandboxOnly ? 'sandbox Soft-QA — not checkout' : 'stub');
+    const modeOptions = sandboxOnly
+      ? '<option value="sandbox">Sandbox</option>'
+      : '<option value="sandbox">Sandbox</option><option value="live">Live</option><option value="off">Off</option>';
     card.innerHTML =
-      '<h3>' + p.label + ' <span class="muted">' + (p.id === 'umg' ? 'live adapter' : 'stub') + '</span></h3>' +
-      '<div class="row"><label><input type="checkbox" data-en="' + p.id + '"' + (p.enabled ? ' checked' : '') + '> Enabled</label></div>' +
-      '<div class="grid2"><div><label class="k">Priority</label><input type="number" data-pr="' + p.id + '" value="' + p.priority + '"></div>' +
-      '<div><label class="k">Mode</label><select data-mo="' + p.id + '">' +
-      '<option value="sandbox">Sandbox</option><option value="live">Live</option><option value="off">Off</option></select></div></div>';
+      '<h3>' + p.label + ' <span class="muted">' + note + '</span></h3>' +
+      '<div class="row"><label><input type="checkbox" data-en="' + p.id + '"' + (!sandboxOnly && p.enabled ? ' checked' : '') + (sandboxOnly ? ' disabled' : '') + '> ' + (sandboxOnly ? 'Checkout off' : 'Enabled') + '</label></div>' +
+      '<div class="grid2"><div><label class="k">Priority</label><input type="number" data-pr="' + p.id + '" value="' + p.priority + '"' + (sandboxOnly ? ' disabled' : '') + '></div>' +
+      '<div><label class="k">Mode</label><select data-mo="' + p.id + '"' + (sandboxOnly ? ' disabled' : '') + '>' +
+      modeOptions + '</select></div></div>';
     box.appendChild(card);
-    card.querySelector('[data-mo]').value = p.mode;
+    card.querySelector('[data-mo]').value = sandboxOnly ? 'sandbox' : p.mode;
   });
 }
 
@@ -96,7 +104,7 @@ document.getElementById('saveBtn').onclick = async function () {
   });
   const out = await api('/api/psp/settings', { method: 'PUT', body: { settings } });
   settings = out.settings;
-  document.getElementById('msg').textContent = 'Saved. Cascade default is UMG → Tagada → Centrobill.';
+  document.getElementById('msg').textContent = 'Saved. Checkout cascade stays UMG → Tagada → Centrobill. Cleffo is sandbox Soft-QA only.';
 };
 
 load().catch(function (e) {

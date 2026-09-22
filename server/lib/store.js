@@ -1,18 +1,58 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-export const PROCESSOR_IDS = ["umg", "tagada", "centrobill"];
+export const PROCESSOR_IDS = ["umg", "tagada", "centrobill", "cleffo"];
+/** Card cascade only. Cleffo is sandbox Soft-QA and is never a checkout PSP. */
+export const CHECKOUT_PROCESSOR_IDS = ["umg", "tagada", "centrobill"];
 export const ABANDONED_MAX = 500;
 
 export function defaultSettings() {
   return {
     killSwitchPsp: null,
     processors: [
-      { id: "umg", label: "UMG", enabled: true, priority: 1, mode: "sandbox" },
-      { id: "tagada", label: "Tagada", enabled: false, priority: 2, mode: "off" },
-      { id: "centrobill", label: "Centrobill", enabled: false, priority: 3, mode: "off" },
+      { id: "umg", label: "UMG", enabled: true, priority: 1, mode: "sandbox", sandboxOnly: false },
+      { id: "tagada", label: "Tagada", enabled: false, priority: 2, mode: "off", sandboxOnly: false },
+      { id: "centrobill", label: "Centrobill", enabled: false, priority: 3, mode: "off", sandboxOnly: false },
+      { id: "cleffo", label: "Cleffo", enabled: false, priority: 4, mode: "sandbox", sandboxOnly: true },
     ],
   };
+}
+
+function processorFallback(id) {
+  return defaultSettings().processors.find((p) => p.id === id);
+}
+
+function normalizeProcessor(p, index) {
+  const fallback = processorFallback(p.id) || { id: p.id, label: p.id, priority: index + 1 };
+  const sandboxOnly = p.id === "cleffo";
+  return {
+    id: p.id,
+    label: p.label || fallback.label || p.id,
+    enabled: sandboxOnly ? false : Boolean(p.enabled),
+    priority: Number(p.priority) || fallback.priority || index + 1,
+    mode: sandboxOnly ? "sandbox" : (["live", "sandbox", "off"].includes(p.mode) ? p.mode : "off"),
+    sandboxOnly,
+  };
+}
+
+/** Settings view used by the Processors UI. Cleffo stays sandbox and checkout-off. */
+export function presentSettings(settings) {
+  const incoming = settings && typeof settings === "object" ? settings : {};
+  const processors = Array.isArray(incoming.processors) ? incoming.processors : [];
+  const normalized = [];
+  const seen = new Set();
+  processors.forEach((p, i) => {
+    if (!p || !PROCESSOR_IDS.includes(p.id) || seen.has(p.id)) return;
+    seen.add(p.id);
+    normalized.push(normalizeProcessor(p, i));
+  });
+  for (const id of PROCESSOR_IDS) {
+    if (!seen.has(id)) normalized.push(processorFallback(id));
+  }
+  let kill = incoming.killSwitchPsp ?? null;
+  if (kill === "" || kill === "none" || kill === "cleffo") kill = null;
+  if (kill && !CHECKOUT_PROCESSOR_IDS.includes(kill)) kill = null;
+  return { killSwitchPsp: kill, processors: normalized };
 }
 
 function emptyData() {
@@ -62,7 +102,7 @@ export function createStore(opts = {}) {
     try {
       const parsed = JSON.parse(readFileSync(filePath, "utf8"));
       data = {
-        settings: { ...defaultSettings(), ...(parsed.settings || {}) },
+        settings: presentSettings({ ...defaultSettings(), ...(parsed.settings || {}) }),
         orders: Array.isArray(parsed.orders) ? parsed.orders : [],
         quotes: Array.isArray(parsed.quotes) ? parsed.quotes : [],
         abandoned_checkouts: asAbandonedMap(parsed.abandoned_checkouts),
@@ -86,32 +126,17 @@ export function createStore(opts = {}) {
 
   return {
     getSettings() {
-      return clone(data.settings);
+      return presentSettings(data.settings);
     },
     saveSettings(next) {
       const incoming = next && typeof next === "object" ? next : {};
       const processors = Array.isArray(incoming.processors)
         ? incoming.processors
         : data.settings.processors;
-      const normalized = processors
-        .filter((p) => PROCESSOR_IDS.includes(p.id))
-        .map((p, i) => ({
-          id: p.id,
-          label: p.label || p.id,
-          enabled: Boolean(p.enabled),
-          priority: Number(p.priority) || i + 1,
-          mode: ["live", "sandbox", "off"].includes(p.mode) ? p.mode : "off",
-        }));
-      for (const id of PROCESSOR_IDS) {
-        if (!normalized.some((p) => p.id === id)) {
-          const fallback = defaultSettings().processors.find((p) => p.id === id);
-          normalized.push(fallback);
-        }
-      }
-      let kill = incoming.killSwitchPsp ?? data.settings.killSwitchPsp;
-      if (kill === "" || kill === "none") kill = null;
-      if (kill && !PROCESSOR_IDS.includes(kill)) kill = null;
-      data.settings = { killSwitchPsp: kill, processors: normalized };
+      const kill = incoming.killSwitchPsp !== undefined
+        ? incoming.killSwitchPsp
+        : data.settings.killSwitchPsp;
+      data.settings = presentSettings({ killSwitchPsp: kill, processors });
       persist();
       return clone(data.settings);
     },

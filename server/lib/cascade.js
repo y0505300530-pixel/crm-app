@@ -3,11 +3,13 @@ import { formatAmount } from "./card.js";
 import * as umg from "./processors/umg.js";
 import * as tagada from "./processors/tagada.js";
 import * as centrobill from "./processors/centrobill.js";
+import * as cleffo from "./processors/cleffo.js";
 
 export const ADAPTERS = {
   umg,
   tagada,
   centrobill,
+  cleffo,
 };
 
 const APPROVED = new Set(["APPROVED", "CAPTURED", "PAID"]);
@@ -19,8 +21,11 @@ function nowIso() {
 
 function enabledQueue(settings) {
   const kill = settings.killSwitchPsp;
-  let list = (settings.processors || []).filter((p) => p && p.enabled && p.mode !== "off");
-  if (kill) list = list.filter((p) => p.id === kill);
+  // Cleffo is a parallel sandbox payment-link PSP. Never put it on /api/checkout/charge.
+  let list = (settings.processors || []).filter((p) =>
+    p && p.enabled && p.mode !== "off" && p.id !== "cleffo" && !p.sandboxOnly,
+  );
+  if (kill && kill !== "cleffo") list = list.filter((p) => p.id === kill);
   return list.sort((a, b) => (a.priority || 99) - (b.priority || 99));
 }
 
