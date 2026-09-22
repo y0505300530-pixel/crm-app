@@ -496,6 +496,25 @@ Fired only after Accept via `blrTrack` / `cookie-consent.js` (`G-KCMPHP783M`). *
 17. Confirm whether GA4 event **`card_sim`** is still intentional (not present in current storefront JS tree).
 18. Accept Soft-QA filtering rules (spam_score / disposable flags in leads-digest library) as the source of truth for “real lead” counts vs GA4 `generate_lead`?
 
+---
+
+## Appendix: Indian Soft-QA storefront deltas (READ-ONLY · 2026-09-22)
+
+**Source:** Indian — `/workspace/biolabs-storefront-retention-audit-2026-09-22.md` (LIVE-READ storefront Soft-QA). Folded by CRM for consolidate. No code changes.
+
+| Delta vs CRM main report | LIVE-READ note |
+|--------------------------|----------------|
+| **INSIDER25 still offered in chat** | promo bar dead + `#insiderClub` markup missing on audited pages; `email-capture.js` still loads; **chat-widget can still offer the code** |
+| **notify-order after quote** | Still `POST /api/notify-order` after successful quote (M21 bridge so shop `orders.json` / reorder path may miss pure UMG quotes) |
+| **/api/track** | Only after `localStorage.biolabs_track` from subscribe/identify |
+| **auth.js** | localStorage stub + Google client ID placeholder; `/account` `/login` `/orders` remain **404** |
+| **Cross-sell** | **Live** — cart “Add to this order” + PDP “Pairs well at the bench” (not “does not exist”) |
+| **Stock** | Products API stockless; SSR `data-stock="in"` cosmetic only |
+
+Storefront stamp at Indian audit: **v3.00k8c**. Full Indian markdown kept as sibling file on the shared box.
+
+---
+
 ## Appendix: LIVE-READ process snapshot
 
 - Host: `134.199.235.122` · audit window ~19:56–20:00 IDT 2026-09-22  
