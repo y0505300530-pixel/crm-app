@@ -29,6 +29,7 @@ No `Access-Control-Allow-Origin` is emitted. The path is not a storefront beacon
 - Quotes match on `createdAt` (else `updatedAt`).
 - Abandons match on `last_seen` (else `seen_at`, else `first_seen`).
 - Join key is the day. There is no `track_token` field on the response. Click ids (`gclid`, `fbclid`, `ttclid`, `msclkid`, and the other ids listed in `leads-digest.js`) are replaced with `"[present]"`.
+- `sanitizeAttribution` is the named export live `quote.js` / `abandon.js` import. It is the same function as `publicAttribution`: utm, `landing`, and `pages_before_submit` are kept; click-id values are stripped.
 
 ## Row
 

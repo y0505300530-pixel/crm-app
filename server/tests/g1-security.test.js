@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createStore } from "../lib/store.js";
-import { buildLeadsDigest, jerusalemDay, scoreLead } from "../lib/leads-digest.js";
+import { buildLeadsDigest, jerusalemDay, publicAttribution, sanitizeAttribution, scoreLead } from "../lib/leads-digest.js";
 import { isPaymentsEnabled } from "../lib/payments.js";
 import { secretsEqual, sessionBodyOk } from "../lib/operator-auth.js";
 import { startCrmServer } from "../index.js";
@@ -281,6 +281,27 @@ test("storefront OPTIONS and POST abandon+quote still succeed from biolabsresear
       assert.equal(missingNotify.status, 404);
     });
   });
+});
+
+test("sanitizeAttribution is the named export live quote.js and abandon.js import", () => {
+  assert.equal(publicAttribution, sanitizeAttribution);
+  const out = sanitizeAttribution({
+    utm_source: "google",
+    utm_medium: "cpc",
+    landing: "/checkout",
+    pages_before_submit: ["/", "/checkout"],
+    gclid: "EAIaIQobChMI-secret-click",
+    fbclid: "",
+    track_token: "should-not-leak",
+  });
+  assert.equal(out.utm_source, "google");
+  assert.equal(out.utm_medium, "cpc");
+  assert.equal(out.landing, "/checkout");
+  assert.deepEqual(out.pages_before_submit, ["/", "/checkout"]);
+  assert.equal(out.gclid, "[present]");
+  assert.equal("fbclid" in out, false);
+  assert.equal("track_token" in out, false);
+  assert.equal(JSON.stringify(out).includes("EAIa"), false);
 });
 
 test("digest day boundary uses Asia/Jerusalem and scoreLead flags disposable mail", () => {

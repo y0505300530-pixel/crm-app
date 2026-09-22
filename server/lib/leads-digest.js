@@ -103,13 +103,31 @@ export function scoreLead({ email, firstName, lastName } = {}) {
   return { spam_score, disposable, gibberish, soft_qa };
 }
 
-export function publicAttribution(raw) {
+/**
+ * Write-path helper imported by live quote.js and abandon.js.
+ * Keeps utm_*, landing, and pages_before_submit. Click-id keys stay;
+ * their values are replaced so the raw id is never stored.
+ * publicAttribution is the same function (digest read path).
+ */
+export function sanitizeAttribution(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const out = {};
   for (const [key, value] of Object.entries(raw)) {
     if (/token|secret|track_token/i.test(key)) continue;
-    if (CLICK_ID_KEYS.has(String(key).toLowerCase())) {
+    const lower = String(key).toLowerCase();
+    if (CLICK_ID_KEYS.has(lower)) {
       if (value) out[key] = "[present]";
+      continue;
+    }
+    if (lower === "pages_before_submit") {
+      if (Array.isArray(value)) {
+        out[key] = value
+          .filter((item) => item != null && (typeof item === "string" || typeof item === "number"))
+          .map((item) => String(item).slice(0, 300))
+          .slice(0, 30);
+      } else if (typeof value === "string" || typeof value === "number") {
+        out[key] = String(value).slice(0, 2000);
+      }
       continue;
     }
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
@@ -118,6 +136,8 @@ export function publicAttribution(raw) {
   }
   return out;
 }
+
+export const publicAttribution = sanitizeAttribution;
 
 export function cartContents(items) {
   if (!Array.isArray(items) || items.length === 0) return "";
