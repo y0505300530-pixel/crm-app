@@ -21,6 +21,9 @@ import {
   sendAbandonedDigest,
   upsertAbandonedLead,
 } from "./lib/abandon.js";
+import { corsHeadersForRequest } from "./lib/cors.js";
+import { buildLeadsDigest } from "./lib/leads-digest.js";
+import { marketingDigestKeyOk, operatorAuthorized } from "./lib/operator-auth.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -35,18 +38,6 @@ function liveAdapters() {
     return { umg: createMockUmg({ scenario: "soft" }), tagada, centrobill };
   }
   return ADAPTERS;
-}
-
-function json(res, status, body) {
-  const data = JSON.stringify(body);
-  res.writeHead(status, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type, X-CRM-Role",
-    "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
-  });
-  res.end(data);
 }
 
 function readBody(req) {
@@ -66,16 +57,6 @@ function readBody(req) {
 function callbackUrl() {
   const path = "/api/webhooks/umg";
   return PUBLIC_URL ? `${PUBLIC_URL}${path}` : path;
-}
-
-function noContent(res) {
-  res.writeHead(204, {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type, X-CRM-Role",
-    "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
-    "Cache-Control": "no-store",
-  });
-  res.end();
 }
 
 function readBodySilent(req) {
@@ -106,18 +87,47 @@ export function createHandler(deps = {}) {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   const path = url.pathname.replace(/\/+$/, "") || "/";
 
+  function json(status, body) {
+    const data = JSON.stringify(body);
+    res.writeHead(status, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+      ...corsHeadersForRequest(req, path),
+    });
+    res.end(data);
+  }
+
+  function noContent() {
+    res.writeHead(204, {
+      "Cache-Control": "no-store",
+      ...corsHeadersForRequest(req, path),
+    });
+    res.end();
+  }
+
+  async function denyUnlessOperator() {
+    const ok = await operatorAuthorized(req, {
+      checkCrmSession: deps.checkCrmSession,
+      fetchImpl: deps.fetchImpl,
+    });
+    if (!ok) {
+      json(401, { error: "unauthorized" });
+      return true;
+    }
+    return false;
+  }
+
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "Content-Type, X-CRM-Role",
-      "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
+      "Cache-Control": "no-store",
+      ...corsHeadersForRequest(req, path),
     });
     return res.end();
   }
 
   try {
     if (path === "/api/health" && req.method === "GET") {
-      return json(res, 200, {
+      return json(200, {
         ok: true,
         dryRun: DRY_RUN,
         callbackUrl: callbackUrl(),
@@ -127,7 +137,7 @@ export function createHandler(deps = {}) {
 
     if (path === "/api/psp/health" && req.method === "GET") {
       const enabled = isPaymentsEnabled();
-      return json(res, 200, {
+      return json(200, {
         ok: true,
         service: "crm-umg",
         dryRun: DRY_RUN,
@@ -139,7 +149,8 @@ export function createHandler(deps = {}) {
     }
 
     if (path === "/api/psp/settings" && req.method === "GET") {
-      return json(res, 200, {
+      if (await denyUnlessOperator()) return;
+      return json(200, {
         settings: db.getSettings(),
         health: {
           ...secretHealth(),
@@ -152,30 +163,34 @@ export function createHandler(deps = {}) {
     }
 
     if (path === "/api/psp/settings" && req.method === "PUT") {
+      if (await denyUnlessOperator()) return;
       const body = await readBody(req);
       const settings = db.saveSettings(body.settings || body);
-      return json(res, 200, { settings });
+      return json(200, { settings });
     }
 
     if (path === "/api/store-orders" && req.method === "GET") {
-      return json(res, 200, { orders: db.listOrders() });
+      if (await denyUnlessOperator()) return;
+      return json(200, { orders: db.listOrders() });
     }
 
     if (path.startsWith("/api/store-orders/") && req.method === "GET") {
+      if (await denyUnlessOperator()) return;
       const id = decodeURIComponent(path.slice("/api/store-orders/".length));
       const order = db.getOrder(id);
-      if (!order) return json(res, 404, { error: "not_found" });
-      return json(res, 200, { order });
+      if (!order) return json(404, { error: "not_found" });
+      return json(200, { order });
     }
 
     if (path === "/api/store-orders/poll" && req.method === "POST") {
+      if (await denyUnlessOperator()) return;
       const results = await pollPending(db, { adapters: resolveAdapters() });
-      return json(res, 200, { results, orders: db.listOrders() });
+      return json(200, { results, orders: db.listOrders() });
     }
 
     if (path === "/api/checkout/charge" && req.method === "POST") {
       if (!isPaymentsEnabled()) {
-        return json(res, 503, paymentsDisabledBody());
+        return json(503, paymentsDisabledBody());
       }
       const body = await readBody(req);
       const result = await chargeCart(body, { store: db, adapters: resolveAdapters() });
@@ -185,57 +200,68 @@ export function createHandler(deps = {}) {
           id: result.order?.id || null,
         });
       }
-      return json(res, result.ok ? 200 : 402, result);
+      return json(result.ok ? 200 : 402, result);
     }
 
     if (path === "/api/checkout/quote" && req.method === "POST") {
       const body = await readBody(req);
       const result = await createQuote(body, { store: db, sendQuoteEmail });
       if (!result.ok) {
-        return json(res, result.status || 400, { ok: false, error: result.error });
+        return json(result.status || 400, { ok: false, error: result.error });
       }
       markConvertedBySession(db, body.session_id || body.sessionId, {
         via: "quote",
         id: result.quoteId || null,
       });
-      return json(res, 200, {
+      return json(200, {
         ok: true,
         quoteId: result.quoteId,
         message: result.message,
       });
     }
 
+    if (path === "/api/checkout/leads-digest" && req.method === "GET") {
+      if (!marketingDigestKeyOk(req)) return json(401, { error: "unauthorized" });
+      const day = url.searchParams.get("day");
+      const digest = buildLeadsDigest(db, day ? { day } : {});
+      if (!digest.ok) return json(digest.status || 400, { error: digest.error });
+      return json(200, digest);
+    }
+
     if (path === "/api/checkout/abandon" && req.method === "GET") {
-      return json(res, 200, { abandoned_checkouts: db.listAbandonedCheckouts() });
+      if (await denyUnlessOperator()) return;
+      return json(200, { abandoned_checkouts: db.listAbandonedCheckouts() });
     }
 
     if (path === "/api/checkout/abandon" && req.method === "POST") {
       try {
         const parsed = await readBodySilent(req);
-        if (!parsed.ok) return noContent(res);
-        if (!abandonLimiter.allow(clientIp(req))) return noContent(res);
+        if (!parsed.ok) return noContent();
+        if (!abandonLimiter.allow(clientIp(req))) return noContent();
         const normalized = normalizeAbandonPayload(parsed.body);
         if (!normalized.ok) {
-          if (normalized.silent) return noContent(res);
-          return json(res, normalized.status || 400, {
+          if (normalized.silent) return noContent();
+          return json(normalized.status || 400, {
             ok: false,
             error: normalized.error,
             message: normalized.message,
           });
         }
         upsertAbandonedLead(db, normalized.record);
-        return noContent(res);
+        return noContent();
       } catch {
-        return noContent(res);
+        return noContent();
       }
     }
 
     if (path === "/api/psp/abandoned-digest" && req.method === "POST") {
+      if (await denyUnlessOperator()) return;
       const out = await sendAbandonDigest(db, deps.abandonDigestTransport);
-      return json(res, 200, out);
+      return json(200, out);
     }
 
     if (path === "/api/psp/dry-run" && req.method === "POST") {
+      if (await denyUnlessOperator()) return;
       const body = await readBody(req);
       const scenario = body.scenario || "soft";
       const cards = {
@@ -302,30 +328,30 @@ export function createHandler(deps = {}) {
           ],
         },
       });
-      return json(res, 200, result);
+      return json(200, result);
     }
 
     if (path === "/api/webhooks/umg" && req.method === "POST") {
       const body = await readBody(req);
-      return json(res, 200, handleProcessorWebhook(db, "umg", body));
+      return json(200, handleProcessorWebhook(db, "umg", body));
     }
     if (path === "/api/webhooks/tagada" && req.method === "POST") {
       const body = await readBody(req);
-      return json(res, 200, handleProcessorWebhook(db, "tagada", body));
+      return json(200, handleProcessorWebhook(db, "tagada", body));
     }
     if (path === "/api/webhooks/centrobill" && req.method === "POST") {
       const body = await readBody(req);
-      return json(res, 200, handleProcessorWebhook(db, "centrobill", body));
+      return json(200, handleProcessorWebhook(db, "centrobill", body));
     }
 
     if (path === "/" || path === "/api") {
-      return json(res, 200, { service: "biolabs-crm-psp", health: "/api/health" });
+      return json(200, { service: "biolabs-crm-psp", health: "/api/health" });
     }
 
-    return json(res, 404, { error: "not_found" });
+    return json(404, { error: "not_found" });
   } catch (err) {
     const message = err?.message === "invalid_json" ? "invalid_json" : "server_error";
-    return json(res, message === "invalid_json" ? 400 : 500, { error: message });
+    return json(message === "invalid_json" ? 400 : 500, { error: message });
   }
   };
 }

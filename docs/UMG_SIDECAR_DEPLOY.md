@@ -130,13 +130,15 @@ If `$forwarded_for_value` is not defined on this host, use `$proxy_add_x_forward
 | Public path | Sidecar | Why |
 |---|---|---|
 | `/api/checkout/quote` | yes | storefront SoT while payments are off — see [QUOTE_MODE.md](./QUOTE_MODE.md) |
-| `/api/checkout/abandon` | yes | abandoned-checkout beacon + CRM list — see [ABANDONED_CHECKOUT.md](./ABANDONED_CHECKOUT.md) |
+| `/api/checkout/abandon` | POST public (CORS allowlist); GET operator-only | abandoned-checkout beacon + CRM list — see [ABANDONED_CHECKOUT.md](./ABANDONED_CHECKOUT.md) |
+| `/api/checkout/leads-digest` | GET + `X-Marketing-Key` | Marketing day digest — see [MARKETING-LEADS-DIGEST.md](./MARKETING-LEADS-DIGEST.md) |
 | `/api/checkout/charge` | yes | UMG cascade, gated by `PAYMENTS_ENABLED` (default **false** → HTTP 503) |
 | `/api/webhooks/umg` | yes | UMG portal callback |
 | `/api/psp/health` | yes | sidecar health (not `/api/health`) |
-| `/api/psp/settings` | yes | Processors UI |
-| `/api/psp/dry-run` | yes | admin dry-run |
-| `/api/store-orders` + `/poll` | yes | PSP clearing list (not shop fulfillment) |
+| `/api/psp/settings` | GET/PUT operator-only | Processors UI. CRM bearer or `X-Marketing-Key` |
+| `/api/psp/dry-run` | POST operator-only | admin dry-run |
+| `/api/store-orders` + `/poll` | operator-only | PSP clearing list (not shop fulfillment) |
+| `/api/notify-order` | **not in this repo** | products-api `:4000`. Do not add a stub here. |
 | `/api/health` | **no — stays 3001** | live CRM v14.09 |
 | `/api/login` `/api/orders` `/api/leads` … | **no — stays 3001** | live CRM |
 
@@ -199,7 +201,27 @@ Until those three files are updated on the live tree, the sidecar API still work
 
 ---
 
-## 5. Out of scope
+## 5. Gate G1 file copy (`/opt/crm-umg` is often not a git checkout)
+
+Do not flip `PAYMENTS_ENABLED`. Do not widen CORS back to `*`. Do not enable abandon-digest email.
+
+```bash
+# from a checkout of this commit, on the CRM host
+sudo cp server/index.js /opt/crm-umg/server/index.js
+sudo cp server/lib/cors.js /opt/crm-umg/server/lib/cors.js
+sudo cp server/lib/operator-auth.js /opt/crm-umg/server/lib/operator-auth.js
+sudo cp server/lib/leads-digest.js /opt/crm-umg/server/lib/leads-digest.js
+sudo cp docs/MARKETING-LEADS-DIGEST.md /opt/crm-umg/docs/MARKETING-LEADS-DIGEST.md
+sudo systemctl restart crm-umg
+```
+
+Diff any pre-existing `/opt/crm-umg/server/lib/leads-digest.js` first. The process needs an ESM export named `buildLeadsDigest`. Fold extra live Soft-QA rules into this copy before overwrite. `MARKETING_DIGEST_KEY` stays in the systemd unit; do not print it.
+
+CRM HTML pages already send `Authorization: Bearer <crm_token>` via `crm.js`. The sidecar checks that token with `GET http://127.0.0.1:3001/api/session` (override with `CRM_AUTH_URL` and `CRM_SESSION_PATH`). A 200 body must include `user`, `email`, or role `admin`/`staff`. If blitz is down, operator routes fail closed with 401. Storefront `POST /api/checkout/abandon` and `POST /api/checkout/quote` stay public.
+
+`POST /api/notify-order` is **not implemented in crm-umg**. It lives on products-api (`:4000`) and writes shop `orders.json`. CRM will lock that service separately. Quote-only mode on this sidecar is unchanged (`PAYMENTS_ENABLED` unset → charge returns 503).
+
+## 6. Out of scope
 
 - Storefront `biolabsresearch.co` stays v2.99a.
 - `/opt/crm-api/server_v14.cjs` is not modified.

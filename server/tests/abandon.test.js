@@ -91,8 +91,9 @@ test("invalid email / missing session_id silently drop with 204", async () => {
       customer: { first_name: "Ada" },
     });
     assert.equal(noEmail.status, 204);
-    const listed = await fetch(`http://127.0.0.1:${port}/api/checkout/abandon`).then((r) => r.json());
-    assert.equal(listed.abandoned_checkouts.length, 0);
+    const listed = await fetch(`http://127.0.0.1:${port}/api/checkout/abandon`);
+    assert.equal(listed.status, 401);
+    assert.equal(store.listAbandonedCheckouts().length, 0);
   });
 });
 

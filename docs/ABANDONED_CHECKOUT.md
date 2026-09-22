@@ -8,7 +8,7 @@ This is **not** a payment. Never send card / PAN / CVV / CVC / expiry / last4 / 
 | Call | When |
 |---|---|
 | `POST /api/checkout/abandon` | After the shopper email is known; throttle **20–30s**; prefer `navigator.sendBeacon` on hide/unload |
-| `GET /api/checkout/abandon` | CRM list (operators) |
+| `GET /api/checkout/abandon` | CRM list (operators). Requires `X-Marketing-Key` or a CRM session bearer. Unauthenticated calls return **401**. |
 | `POST /api/checkout/quote` | Final submit in quote mode — include the **same** `session_id` |
 | `POST /api/checkout/charge` | Final submit only when `PAYMENTS_ENABLED=true` — include the same `session_id` |
 
@@ -114,7 +114,12 @@ curl -sS -o /dev/null -w "%{http_code}\n" -X POST https://crm.biolabsresearch.co
   }'
 # expect 204
 
-curl -sS https://crm.biolabsresearch.co/api/checkout/abandon | head
+# list is operator-only (401 without a key or CRM session)
+curl -sS -o /dev/null -w "%{http_code}\n" https://crm.biolabsresearch.co/api/checkout/abandon
+# expect 401
+
+curl -sS https://crm.biolabsresearch.co/api/checkout/abandon \
+  -H "X-Marketing-Key: $MARKETING_DIGEST_KEY" | head
 # row visible: QA Abandon / qa+abandon001@…
 
 # then convert via quote (same session_id)
