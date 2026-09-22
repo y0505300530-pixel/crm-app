@@ -24,6 +24,12 @@ import {
 import { corsHeadersForRequest } from "./lib/cors.js";
 import { buildLeadsDigest } from "./lib/leads-digest.js";
 import { marketingDigestKeyOk, operatorAuthorized } from "./lib/operator-auth.js";
+import {
+  createPaymentLink,
+  getPaymentStatus,
+  publicCleffoView,
+  sandboxTenDollarInput,
+} from "./lib/processors/cleffo.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -57,6 +63,14 @@ function readBody(req) {
 function callbackUrl() {
   const path = "/api/webhooks/umg";
   return PUBLIC_URL ? `${PUBLIC_URL}${path}` : path;
+}
+
+function cleffoStatus(result) {
+  if (result?.ok) return 200;
+  if (result?.error === "cleffo_sandbox_not_configured" || result?.error === "cleffo_sandbox_host_required") return 503;
+  if (result?.error === "card_not_accepted" || result?.error === "transaction_reference_required" || result?.httpStatus === 400) return 400;
+  if (result?.httpStatus >= 400 && result.httpStatus < 500) return result.httpStatus;
+  return 502;
 }
 
 function readBodySilent(req) {
@@ -329,6 +343,40 @@ export function createHandler(deps = {}) {
         },
       });
       return json(200, result);
+    }
+
+    if (path === "/api/psp/cleffo/sandbox/return" && (req.method === "GET" || req.method === "POST")) {
+      return json(200, {
+        ok: false,
+        sandbox: true,
+        checkout: false,
+        success: false,
+        message: "Redirect is not payment success. Poll Cleffo status (pending, completed, or failed).",
+      });
+    }
+
+    if (path === "/api/psp/cleffo/sandbox/payment-link" && req.method === "POST") {
+      if (await denyUnlessOperator()) return;
+      const body = await readBody(req);
+      if (body.card || body.pan || body.cvv || body.cvc) {
+        return json(400, { ok: false, sandbox: true, checkout: false, error: "card_not_accepted" });
+      }
+      const cleffoDeps = { fetchImpl: deps.cleffoFetch, env: deps.cleffoEnv };
+      const result = await createPaymentLink(sandboxTenDollarInput({
+        merchantOrderId: typeof body.merchant_order_id === "string" ? body.merchant_order_id : undefined,
+        redirectUrl: typeof body.redirect_url === "string" ? body.redirect_url : undefined,
+      }, deps.cleffoEnv), cleffoDeps);
+      const view = publicCleffoView(result);
+      return json(cleffoStatus(result), view);
+    }
+
+    if (path === "/api/psp/cleffo/sandbox/status" && req.method === "GET") {
+      if (await denyUnlessOperator()) return;
+      const result = await getPaymentStatus(url.searchParams.get("ref"), {
+        fetchImpl: deps.cleffoFetch,
+        env: deps.cleffoEnv,
+      });
+      return json(cleffoStatus(result), publicCleffoView(result));
     }
 
     if (path === "/api/webhooks/umg" && req.method === "POST") {

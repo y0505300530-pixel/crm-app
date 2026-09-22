@@ -41,7 +41,7 @@ export default function ProcessorSettings({ isAdmin }) {
     try {
       const out = await saveSettings(settings);
       setSettings(out.settings);
-      setMsg("Processor settings saved. Cascade order is UMG → Tagada → Centrobill unless you change priority or kill-switch.");
+      setMsg("Processor settings saved. Checkout cascade stays UMG → Tagada → Centrobill. Cleffo is sandbox Soft-QA only and is not storefront checkout.");
     } catch {
       setErr("Save failed — is the CRM server up?");
     }
@@ -58,7 +58,7 @@ export default function ProcessorSettings({ isAdmin }) {
       <div style={{ marginBottom: 22 }}>
         <h2 style={{ margin: "0 0 6px", fontSize: 22 }}>Payment processors</h2>
         <p style={{ margin: 0, color: "#94A3B8", fontSize: 14, maxWidth: 720 }}>
-          Locked SoT: UMG is #1, then Tagada, then Centrobill. Soft decline / timeout / 5xx / processor-down moves to the next enabled PSP with the same cart key. Hard decline (fraud / do-not-honor / invalid card) stops. Clearing stays in CRM only.
+          Locked SoT: UMG is #1, then Tagada, then Centrobill. Soft decline / timeout / 5xx / processor-down moves to the next enabled PSP with the same cart key. Hard decline (fraud / do-not-honor / invalid card) stops. Cleffo (apis-dev) is a parallel sandbox for Soft-QA payment links. It is not the live card processor and is not used by storefront checkout.
         </p>
       </div>
 
@@ -76,6 +76,15 @@ export default function ProcessorSettings({ isAdmin }) {
           <div style={{ fontSize: 11, color: "#64748B", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>UMG callback URL</div>
           <div style={{ fontSize: 14, fontWeight: 600, color: "#38BDF8", wordBreak: "break-all" }}>{health.callbackUrl || "/api/webhooks/umg"}</div>
           <div style={{ marginTop: 8, fontSize: 12, color: "#64748B" }}>Paste this in the UMG portal. Poll fallback runs every 30s for PENDING / 3DS.</div>
+        </div>
+        <div style={{ background: "rgba(30,41,59,0.8)", border: "1px solid rgba(148,163,184,0.12)", borderRadius: 14, padding: 18, gridColumn: "1 / -1" }}>
+          <div style={{ fontSize: 11, color: "#64748B", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>Cleffo sandbox</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: health.cleffoSandboxConfigured ? "#10B981" : "#F59E0B" }}>
+            {health.cleffoSandboxConfigured ? "Dev keys loaded — Soft-QA only" : "Dev keys not loaded"}
+          </div>
+          <div style={{ marginTop: 8, fontSize: 12, color: "#64748B" }}>
+            Host {health.cleffoSandboxHost || "apis-dev.cleffo.com"}. Checkout {health.cleffoCheckoutEnabled ? "on" : "off"}. Create a $10 link with npm run cleffo:soft-qa. Redirect is not success.
+          </div>
         </div>
       </div>
 
@@ -100,22 +109,24 @@ export default function ProcessorSettings({ isAdmin }) {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
             <div>
               <div style={{ fontSize: 16, fontWeight: 700 }}>{p.label}</div>
-              <div style={{ fontSize: 12, color: "#64748B", marginTop: 2 }}>{p.id === "umg" ? "Live adapter" : "Stub — cascade-ready, not wired"}</div>
+              <div style={{ fontSize: 12, color: "#64748B", marginTop: 2 }}>
+                {p.id === "umg" ? "Live card adapter" : p.sandboxOnly ? "Sandbox Soft-QA only — not storefront checkout" : "Stub — cascade-ready, not wired"}
+              </div>
             </div>
             <label style={{ display: "flex", alignItems: "center", gap: 8, color: "#CBD5E1", fontSize: 13 }}>
-              <input type="checkbox" disabled={!isAdmin} checked={p.enabled} onChange={(e) => patchProcessor(p.id, { enabled: e.target.checked })} />
-              Enabled
+              <input type="checkbox" disabled={!isAdmin || p.sandboxOnly} checked={p.sandboxOnly ? false : p.enabled} onChange={(e) => patchProcessor(p.id, { enabled: e.target.checked })} />
+              {p.sandboxOnly ? "Checkout off" : "Enabled"}
             </label>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
             <Field label="Priority (1 = first)">
-              <input style={inp} type="number" disabled={!isAdmin} value={p.priority} onChange={(e) => patchProcessor(p.id, { priority: Number(e.target.value) })} />
+              <input style={inp} type="number" disabled={!isAdmin || p.sandboxOnly} value={p.priority} onChange={(e) => patchProcessor(p.id, { priority: Number(e.target.value) })} />
             </Field>
             <Field label="Mode">
-              <select style={{ ...inp, cursor: isAdmin ? "pointer" : "not-allowed" }} disabled={!isAdmin} value={p.mode} onChange={(e) => patchProcessor(p.id, { mode: e.target.value })}>
+              <select style={{ ...inp, cursor: isAdmin && !p.sandboxOnly ? "pointer" : "not-allowed" }} disabled={!isAdmin || p.sandboxOnly} value={p.sandboxOnly ? "sandbox" : p.mode} onChange={(e) => patchProcessor(p.id, { mode: e.target.value })}>
                 <option value="sandbox">Sandbox</option>
-                <option value="live">Live</option>
-                <option value="off">Off</option>
+                {p.sandboxOnly ? null : <option value="live">Live</option>}
+                {p.sandboxOnly ? null : <option value="off">Off</option>}
               </select>
             </Field>
           </div>

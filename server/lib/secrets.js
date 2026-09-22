@@ -44,9 +44,23 @@ export function umgBasicHeader(secret) {
 }
 
 export function secretHealth() {
+  const base = String(process.env.CLEFFO_BASE_URL || "https://apis-dev.cleffo.com").trim();
+  let cleffoHostOk = false;
+  try {
+    const url = new URL(base);
+    cleffoHostOk = url.protocol === "https:" && url.hostname === "apis-dev.cleffo.com" && !url.username;
+  } catch {
+    cleffoHostOk = false;
+  }
+  const cleffoKeys = Boolean(
+    process.env.CLEFFO_CLIENT_KEY && process.env.CLEFFO_SIGNATURE_KEY && process.env.CLEFFO_API_KEY,
+  );
   return {
     umgSecretConfigured: hasUmgSecret(),
     umgEnvPath: umgEnvPath(),
     source: process.env.UMG_API_SECRET ? "env" : hasUmgSecret() ? "file" : "none",
+    cleffoSandboxConfigured: cleffoKeys && cleffoHostOk,
+    cleffoSandboxHost: cleffoHostOk ? "apis-dev.cleffo.com" : "refused",
+    cleffoCheckoutEnabled: false,
   };
 }
