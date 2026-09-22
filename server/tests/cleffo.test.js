@@ -143,6 +143,56 @@ test("status poll uses x-api-key only and completed is the only success", async 
   assert.equal(failed.status, "failed");
 });
 
+test("phone probes preserve formatting or JSON numbers and always include product_id", () => {
+  const preserved = serializePaymentLinkBody(buildPaymentLinkBody(sandboxTenDollarInput({
+    merchantOrderId: "CLEFFO-QA-PLUS",
+    phone: "+12024561111",
+    phonePreserve: true,
+  }), KEYS));
+  assert.match(preserved, /"phone_no":"\+12024561111"/);
+  assert.match(preserved, /"product_id":"g3-r-10mg"/);
+  const asNumber = serializePaymentLinkBody(buildPaymentLinkBody(sandboxTenDollarInput({
+    merchantOrderId: "CLEFFO-QA-NUM",
+    phone: "2025550100",
+    phoneAsNumber: true,
+  }), KEYS));
+  assert.match(asNumber, /"phone_no":2025550100[,}]/);
+  assert.equal(asNumber.includes('"phone_no":"'), false);
+});
+
+test("soft-qa walks phone formats until the valid-number error clears", async () => {
+  const seen = [];
+  const fetchImpl = async (_url, opts) => {
+    const body = JSON.parse(opts.body);
+    const phone = body.data.customer_detail.phone_no;
+    seen.push(phone);
+    assert.equal(body.data.products[0].product_id, "g3-r-10mg");
+    const reject = phone === "2025550100" || phone === "202-555-0100";
+    return {
+      status: 400,
+      async text() {
+        return JSON.stringify({
+          status: false,
+          errors: reject
+            ? { "data.customer_detail.phone_no": "Phone number must be valid number." }
+            : { "data.products.0.product_id": "Product ID is required." },
+        });
+      },
+    };
+  };
+  const { config, view } = await runSoftQa(["--order", "CLEFFO-QA-PHONE"], { ...KEYS, fetchImpl });
+  assert.deepEqual(seen, ["2025550100", "202-555-0100", "(202) 555-0100"]);
+  assert.equal(view.phone_accepted, true);
+  assert.equal(view.phone_probe, "parens_national");
+  assert.equal(view.product_id, "g3-r-10mg");
+  const text = formatSoftQaOutput(view);
+  assert.match(text, /phone_accepted: true/);
+  assert.match(text, /phone_value: \(202\) 555-0100/);
+  assert.match(text, /validation: data\.products\.0\.product_id: Product ID is required\./);
+  assert.equal(outputLeaksSecrets(text, config), false);
+  assert.match(text, /rejected_phones: \+12025550100, 12025550100/);
+});
+
 test("soft-qa stdout prints the link and reference and never the keys", async () => {
   const fetchImpl = async (url) => {
     if (String(url).endsWith("/status")) {

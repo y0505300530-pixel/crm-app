@@ -24,7 +24,30 @@ export const SANDBOX_PRODUCT = Object.freeze({
   image_url: "https://biolabsresearch.co/media/vial-g3-r.png",
 });
 
-export const SANDBOX_PHONE = "12025550100";
+/**
+ * Live 400 rejected both of these with "Phone number must be valid number.":
+ * "+12025550100" and "12025550100".
+ * Soft-QA probes other formats and prints the first one that clears that error.
+ * 10-digit national is the current default attempt, not a confirmed accept.
+ */
+export const REJECTED_PHONES = Object.freeze([
+  { id: "e164_plus_5550100", value: "+12025550100" },
+  { id: "digits_cc_5550100", value: "12025550100" },
+]);
+
+export const PHONE_PROBES = Object.freeze([
+  { id: "national_10", value: "2025550100" },
+  { id: "dashed_national", value: "202-555-0100", preserve: true },
+  { id: "parens_national", value: "(202) 555-0100", preserve: true },
+  { id: "national_10_json", value: "2025550100", asNumber: true },
+  { id: "national_10_non555", value: "2024561111" },
+  { id: "e164_non555", value: "+12024561111", preserve: true },
+  { id: "digits_cc_non555", value: "12024561111" },
+  { id: "dashed_non555", value: "202-456-1111", preserve: true },
+  { id: "json_cc_non555", value: "12024561111", asNumber: true },
+]);
+
+export const SANDBOX_PHONE = PHONE_PROBES[0].value;
 const DEFAULT_TIMEOUT_MS = 15000;
 
 export function digitsOnlyPhone(phone) {
@@ -71,8 +94,10 @@ export function sandboxTenDollarInput(overrides = {}, env = process.env) {
     customer: {
       name: "Soft QA",
       email: "soft-qa@biolabsresearch.co",
-      phone: SANDBOX_PHONE,
+      phone: overrides.phone || SANDBOX_PHONE,
     },
+    phonePreserve: overrides.phonePreserve === true,
+    phoneAsNumber: overrides.phoneAsNumber === true,
     products: [{ ...SANDBOX_PRODUCT }],
     currency: "USD",
     tax: 0,
@@ -95,7 +120,8 @@ function moneyJson(cents) {
 /**
  * Live 400 on POST /api/payment-link (apis-dev.cleffo.com):
  * data.merchant_order_id
- * data.customer_detail.name / email / phone_no (digits only)
+ * data.customer_detail.name / email / phone_no
+ * data.products[].product_id is required (string SKU, e.g. g3-r-10mg)
  * data.products[] with product_id
  * data.price.sub_total / tax / total / currency  (sub_total + tax = total)
  * metadata.redirect_url (not top-level), metadata.source = "api"
@@ -131,8 +157,19 @@ export function buildPaymentLinkBody(input, config) {
   const totalCents = totalSource == null ? expectedTotal : moneyCents(totalSource, "total");
   if (totalCents !== expectedTotal) throw new Error("amount_mismatch");
   const detail = input.customer || input.customer_detail || input.data?.customer_detail || {};
-  const phone = digitsOnlyPhone(detail.phone_no ?? detail.phone ?? input.phone);
-  if (phone.length < 10 || phone.length > 15) throw new Error("phone_digits_required");
+  const rawPhone = String(detail.phone_no ?? detail.phone ?? input.phone ?? "").trim();
+  let phone_no;
+  const phoneAsNumber = input.phoneAsNumber === true;
+  if (phoneAsNumber) {
+    phone_no = digitsOnlyPhone(rawPhone);
+    if (!/^[0-9]{10,15}$/.test(phone_no)) throw new Error("phone_digits_required");
+  } else if (input.phonePreserve === true) {
+    if (!/^\+?[0-9(][0-9().\-\s]{8,20}$/.test(rawPhone)) throw new Error("phone_digits_required");
+    phone_no = rawPhone;
+  } else {
+    phone_no = digitsOnlyPhone(rawPhone);
+    if (phone_no.length < 10 || phone_no.length > 15) throw new Error("phone_digits_required");
+  }
   const merchant_order_id = String(
     input.merchant_order_id || input.data?.merchant_order_id || input.orderId || "",
   ).trim();
@@ -156,7 +193,8 @@ export function buildPaymentLinkBody(input, config) {
     merchant_order_id,
     customer_name,
     customer_email,
-    phone_no: phone,
+    phone_no,
+    phoneAsNumber,
     products,
     subTotalCents,
     taxCents,
@@ -180,13 +218,14 @@ export function serializePaymentLinkBody(body) {
     + "}"
   )).join(",");
   const key = JSON.stringify(body.cleffo_client_key);
+  const phoneJson = body.phoneAsNumber ? body.phone_no : JSON.stringify(body.phone_no);
   return "{"
     + `"data":{`
     + `"merchant_order_id":${JSON.stringify(body.merchant_order_id)},`
     + `"customer_detail":{`
     + `"name":${JSON.stringify(body.customer_name)},`
     + `"email":${JSON.stringify(body.customer_email)},`
-    + `"phone_no":${JSON.stringify(body.phone_no)}`
+    + `"phone_no":${phoneJson}`
     + `},`
     + `"products":[${products}],`
     + `"price":{`
