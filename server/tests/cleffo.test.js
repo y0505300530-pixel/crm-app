@@ -38,16 +38,27 @@ test("HMAC covers the exact JSON bytes, phone is digits, product_id is present, 
   const sig = signBody(raw, KEYS.signatureKey);
   assert.equal(sig, createHmac("sha256", KEYS.signatureKey).update(Buffer.from(raw, "utf8")).digest("hex"));
   assert.notEqual(signBody(`${raw} `, KEYS.signatureKey), sig);
+  const parsed = JSON.parse(raw);
   assert.equal(raw.includes("+"), false);
-  assert.match(raw, /"customer_phone":"12025550100"/);
-  assert.match(raw, /"product_id":"g3-r-10mg"/);
-  assert.match(raw, /"name":"G3-R"/);
-  assert.match(raw, /"price":10\.00/);
-  assert.match(raw, /"product_sum":10\.00/);
-  assert.match(raw, /"tax":0\.00/);
-  assert.match(raw, /"total":10\.00/);
-  assert.match(raw, /"metadata":\{"source":"api"\}/);
-  assert.match(raw, /"cleffo_client_key":"client-key-sandbox"/);
+  assert.equal(parsed.redirect_url, undefined);
+  assert.equal(parsed.data.merchant_order_id, "CLEFFO-QA-1");
+  assert.equal(parsed.data.customer_detail.name, "Soft QA");
+  assert.equal(parsed.data.customer_detail.email, "soft-qa@biolabsresearch.co");
+  assert.equal(parsed.data.customer_detail.phone_no, "12025550100");
+  assert.equal(parsed.data.products[0].product_id, "g3-r-10mg");
+  assert.equal(parsed.data.products[0].name, "G3-R");
+  assert.equal(parsed.data.products[0].image_url, "https://biolabsresearch.co/media/vial-g3-r.png");
+  assert.equal(parsed.data.products[0].image, parsed.data.products[0].image_url);
+  assert.equal(parsed.data.price.sub_total, 10);
+  assert.equal(parsed.data.price.tax, 0);
+  assert.equal(parsed.data.price.total, 10);
+  assert.equal(parsed.data.price.currency, "USD");
+  assert.equal(parsed.metadata.redirect_url.startsWith("https://"), true);
+  assert.equal(parsed.metadata.source, "api");
+  assert.equal(parsed.metadata.cleffo_client_key, "client-key-sandbox");
+  assert.equal(parsed.cleffo_client_key, "client-key-sandbox");
+  assert.match(raw, /"phone_no":"12025550100"/);
+  assert.match(raw, /"sub_total":10\.00/);
   assert.equal(raw.includes("reta"), false);
   assert.throws(() => buildPaymentLinkBody({
     ...sandboxTenDollarInput(),

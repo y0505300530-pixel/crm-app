@@ -93,15 +93,20 @@ function moneyJson(cents) {
 }
 
 /**
- * Confirmed apis-dev.cleffo.com contract:
- * phone digits only, each product has product_id, metadata.source = "api",
- * amounts are product_sum + tax = total.
+ * Live 400 on POST /api/payment-link (apis-dev.cleffo.com):
+ * data.merchant_order_id
+ * data.customer_detail.name / email / phone_no (digits only)
+ * data.products[] with product_id
+ * data.price.sub_total / tax / total / currency  (sub_total + tax = total)
+ * metadata.redirect_url (not top-level), metadata.source = "api"
+ * cleffo_client_key in metadata and at the top level
+ * Product image field is not fully confirmed — send image_url and image.
  * Key order is part of the HMAC (exact body bytes).
  */
 export function buildPaymentLinkBody(input, config) {
   if (!input || typeof input !== "object") throw new Error("invalid_payment_link");
   if (input.card || input.pan || input.cvv || input.cvc) throw new Error("card_not_accepted");
-  const productsIn = Array.isArray(input.products) ? input.products : [];
+  const productsIn = Array.isArray(input.products) ? input.products : (input.data?.products || []);
   if (productsIn.length === 0) throw new Error("products_required");
   const products = productsIn.map((p) => {
     const product_id = String(p.product_id || "").trim();
@@ -112,73 +117,91 @@ export function buildPaymentLinkBody(input, config) {
     if (!Number.isInteger(qty) || qty < 1) throw new Error("product_qty_required");
     const priceCents = moneyCents(p.price, "price");
     if (priceCents < 0) throw new Error("invalid_price");
-    const image_url = String(p.image_url || "").trim();
-    if (!/^https:\/\//.test(image_url)) throw new Error("product_image_url_required");
-    return { product_id, name, qty, priceCents, image_url };
+    const image_url = String(p.image_url || p.image || "").trim();
+    const image = String(p.image || p.image_url || "").trim();
+    if (!/^https:\/\//.test(image_url) || !/^https:\/\//.test(image)) throw new Error("product_image_url_required");
+    return { product_id, name, qty, priceCents, image_url, image };
   });
-  const productSumCents = products.reduce((sum, p) => sum + p.qty * p.priceCents, 0);
-  const taxCents = moneyCents(input.tax ?? 0, "tax");
+  const subTotalCents = products.reduce((sum, p) => sum + p.qty * p.priceCents, 0);
+  const taxSource = input.tax ?? input.data?.price?.tax ?? 0;
+  const taxCents = moneyCents(taxSource, "tax");
   if (taxCents < 0) throw new Error("invalid_tax");
-  const expectedTotal = productSumCents + taxCents;
-  const totalCents = input.total == null ? expectedTotal : moneyCents(input.total, "total");
+  const expectedTotal = subTotalCents + taxCents;
+  const totalSource = input.total ?? input.data?.price?.total;
+  const totalCents = totalSource == null ? expectedTotal : moneyCents(totalSource, "total");
   if (totalCents !== expectedTotal) throw new Error("amount_mismatch");
-  const phone = digitsOnlyPhone(input.customer?.phone ?? input.customer_phone ?? input.phone);
+  const detail = input.customer || input.customer_detail || input.data?.customer_detail || {};
+  const phone = digitsOnlyPhone(detail.phone_no ?? detail.phone ?? input.phone);
   if (phone.length < 10 || phone.length > 15) throw new Error("phone_digits_required");
-  const merchant_order_id = String(input.merchant_order_id || input.orderId || "").trim();
+  const merchant_order_id = String(
+    input.merchant_order_id || input.data?.merchant_order_id || input.orderId || "",
+  ).trim();
   if (!merchant_order_id) throw new Error("merchant_order_id_required");
   const customer_name = String(
-    input.customer?.name
-    || [input.customer?.first_name, input.customer?.last_name].filter(Boolean).join(" ")
-    || input.customer_name
+    detail.name
+    || [detail.first_name, detail.last_name].filter(Boolean).join(" ")
     || "",
   ).trim();
-  const customer_email = String(input.customer?.email || input.customer_email || "").trim();
+  const customer_email = String(detail.email || "").trim();
   if (!customer_name) throw new Error("customer_name_required");
   if (!customer_email.includes("@")) throw new Error("customer_email_required");
-  const currency = String(input.currency || "USD").trim().toUpperCase();
+  const currency = String(input.currency || input.data?.price?.currency || "USD").trim().toUpperCase();
   if (!/^[A-Z]{3}$/.test(currency)) throw new Error("currency_required");
-  const redirect_url = String(input.redirect_url || "").trim();
+  const redirect_url = String(
+    input.redirect_url || input.metadata?.redirect_url || "",
+  ).trim();
   if (!/^https:\/\//.test(redirect_url)) throw new Error("redirect_url_required");
   if (!config?.clientKey) throw new Error("cleffo_client_key_missing");
   return {
     merchant_order_id,
     customer_name,
     customer_email,
-    customer_phone: phone,
-    products: products.map((p) => ({
-      product_id: p.product_id,
-      name: p.name,
-      qty: p.qty,
-      priceCents: p.priceCents,
-      image_url: p.image_url,
-    })),
-    currency,
-    productSumCents,
+    phone_no: phone,
+    products,
+    subTotalCents,
     taxCents,
     totalCents,
-    cleffo_client_key: config.clientKey,
+    currency,
     redirect_url,
+    cleffo_client_key: config.clientKey,
   };
 }
 
 /** Exact JSON bytes that are signed and sent. Money is a JSON number with 2 decimals. */
 export function serializePaymentLinkBody(body) {
   const products = body.products.map((p) => (
-    `{"product_id":${JSON.stringify(p.product_id)},"name":${JSON.stringify(p.name)},"qty":${p.qty},"price":${moneyJson(p.priceCents)},"image_url":${JSON.stringify(p.image_url)}}`
+    "{"
+    + `"product_id":${JSON.stringify(p.product_id)},`
+    + `"name":${JSON.stringify(p.name)},`
+    + `"qty":${p.qty},`
+    + `"price":${moneyJson(p.priceCents)},`
+    + `"image_url":${JSON.stringify(p.image_url)},`
+    + `"image":${JSON.stringify(p.image)}`
+    + "}"
   )).join(",");
+  const key = JSON.stringify(body.cleffo_client_key);
   return "{"
+    + `"data":{`
     + `"merchant_order_id":${JSON.stringify(body.merchant_order_id)},`
-    + `"customer_name":${JSON.stringify(body.customer_name)},`
-    + `"customer_email":${JSON.stringify(body.customer_email)},`
-    + `"customer_phone":${JSON.stringify(body.customer_phone)},`
+    + `"customer_detail":{`
+    + `"name":${JSON.stringify(body.customer_name)},`
+    + `"email":${JSON.stringify(body.customer_email)},`
+    + `"phone_no":${JSON.stringify(body.phone_no)}`
+    + `},`
     + `"products":[${products}],`
-    + `"currency":${JSON.stringify(body.currency)},`
-    + `"product_sum":${moneyJson(body.productSumCents)},`
+    + `"price":{`
+    + `"sub_total":${moneyJson(body.subTotalCents)},`
     + `"tax":${moneyJson(body.taxCents)},`
     + `"total":${moneyJson(body.totalCents)},`
-    + `"metadata":{"source":"api"},`
-    + `"cleffo_client_key":${JSON.stringify(body.cleffo_client_key)},`
-    + `"redirect_url":${JSON.stringify(body.redirect_url)}`
+    + `"currency":${JSON.stringify(body.currency)}`
+    + `}`
+    + `},`
+    + `"metadata":{`
+    + `"redirect_url":${JSON.stringify(body.redirect_url)},`
+    + `"source":"api",`
+    + `"cleffo_client_key":${key}`
+    + `},`
+    + `"cleffo_client_key":${key}`
     + "}";
 }
 

@@ -42,7 +42,7 @@ Stdout prints only:
 
 It does not print `CLEFFO_CLIENT_KEY`, `CLEFFO_SIGNATURE_KEY`, or `CLEFFO_API_KEY`.
 
-The signed body is a $10 G3-R line (`product_id` `g3-r-10mg`, qty 1, price 10.00), tax 0.00, total 10.00, phone digits `12025550100` (plus-formatted phones are stripped and never sent), `metadata.source` `api`.
+The signed body is the live validation shape. `$10` G3-R (`product_id` `g3-r-10mg`) sits on `data.products`. Phone is digits-only `data.customer_detail.phone_no` (`12025550100`). Amounts are `data.price.sub_total` / `tax` / `total` / `currency` (`10.00` + `0.00` = `10.00`, `USD`). `redirect_url` is inside `metadata` (with `source: "api"`). `cleffo_client_key` is sent in `metadata` and at the top level. Product image field is not fully confirmed, so each line sends both `image_url` and `image` as the same public HTTPS URL.
 
 Operator HTTP (same $10 order, same host lock), with the CRM session or `X-Marketing-Key`:
 
@@ -83,6 +83,34 @@ Documented statuses: `pending` | `completed` | `failed`.
 
 - Headers: `Content-Type: application/json`, `x-api-key`, `x-signature`
 - `x-signature` is HMAC-SHA256 **hex** of the exact JSON body bytes, using `CLEFFO_SIGNATURE_KEY`
+- Live 400 required shape:
+
+```json
+{
+  "data": {
+    "merchant_order_id": "CLEFFO-QA-1",
+    "customer_detail": { "name": "Soft QA", "email": "soft-qa@biolabsresearch.co", "phone_no": "12025550100" },
+    "products": [{
+      "product_id": "g3-r-10mg",
+      "name": "G3-R",
+      "qty": 1,
+      "price": 10.00,
+      "image_url": "https://biolabsresearch.co/media/vial-g3-r.png",
+      "image": "https://biolabsresearch.co/media/vial-g3-r.png"
+    }],
+    "price": { "sub_total": 10.00, "tax": 0.00, "total": 10.00, "currency": "USD" }
+  },
+  "metadata": {
+    "redirect_url": "https://crm.biolabsresearch.co/api/psp/cleffo/sandbox/return",
+    "source": "api",
+    "cleffo_client_key": "<CLEFFO_CLIENT_KEY>"
+  },
+  "cleffo_client_key": "<CLEFFO_CLIENT_KEY>"
+}
+```
+
+`redirect_url` is only under `metadata`. `image_url` and `image` are both sent until Cleffo confirms the image field name. The value `<CLEFFO_CLIENT_KEY>` is the env var, not a key.
+
 - Confirmed 200 `data`: `payment_link`, `transaction_reference_number`, `merchant_order_id`, `payment_source=api`
 
 `GET /api/payment-link/{transaction_reference_number}/status`

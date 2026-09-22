@@ -16,7 +16,7 @@ set -a && source /path/to/cleffo.env && set +a
 npm run cleffo:soft-qa
 ```
 
-The script prints `payment_link` and `transaction_reference_number` only (plus merchant order id and `payment_source`). It does not print secrets.
+The script prints `payment_link` and `transaction_reference_number` only (plus merchant order id and `payment_source`). It does not print secrets. The signed body matches the live 400 shape: `data.merchant_order_id`, `data.customer_detail.phone_no` (digits), `data.products`, `data.price.sub_total` / `tax` / `total` / `currency`, and `metadata.redirect_url` with `metadata.source=api`. `cleffo_client_key` is in metadata and at the top level. Each product sends `image_url` and `image` until Cleffo confirms the image field.
 
 1. Open `payment_link` and complete **Bryan's 2D** Stripe sandbox scenario. Screenshot the success page.
 2. Poll. Redirect is not success.
