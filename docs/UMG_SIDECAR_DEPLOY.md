@@ -68,6 +68,9 @@ Environment=CRM_PUBLIC_URL=https://crm.biolabsresearch.co
 Environment=STORE_PATH=/var/lib/crm-umg/store.json
 Environment=UMG_ENV_PATH=/root/secure-quarantine-20260917-audit/umg.env
 Environment=PAYMENTS_ENABLED=false
+# Storefront browser CORS allowlist for /api/checkout/* only (never *).
+# Defaults if unset: biolabsresearch.co + www + blrcommerce.io + www.
+# Example staging add: Environment=CORS_STOREFRONT_ORIGINS=https://biolabsresearch.co,https://www.biolabsresearch.co,https://blrcommerce.io,https://www.blrcommerce.io,https://staging.biolabsresearch.co
 # Do not put UMG_API_SECRET in this file. Do not set UMG_DRY_RUN=1.
 # Quote mode is the storefront SoT. Set PAYMENTS_ENABLED=true only when card capture is unlocked.
 ExecStart=/usr/bin/node /opt/crm-umg/server/index.js
@@ -163,6 +166,27 @@ curl -sS -X POST https://crm.biolabsresearch.co/api/webhooks/umg \
   -H 'Content-Type: application/json' \
   -d '{"ID":"0","Status":"PENDING"}'
 # unknown_transaction is OK — route reached 8787, not 3001
+```
+
+### CORS lock (storefront checkout only)
+
+After deploy, confirm wildcard CORS is gone. Allowlist defaults: `biolabsresearch.co` / `www` / `blrcommerce.io` / `www`. Override with `CORS_STOREFRONT_ORIGINS`.
+
+```bash
+# Evil origin must NOT get ACAO=* (expect no Access-Control-Allow-Origin header)
+curl -sSi -X OPTIONS https://crm.biolabsresearch.co/api/checkout/charge \
+  -H 'Origin: https://evil.example' \
+  -H 'Access-Control-Request-Method: POST' | tr -d '\r' | grep -i access-control-allow-origin || echo 'OK: no ACAO'
+
+# Legitimate storefront Origin must reflect exactly that origin (never *)
+curl -sSi -X OPTIONS https://crm.biolabsresearch.co/api/checkout/charge \
+  -H 'Origin: https://biolabsresearch.co' \
+  -H 'Access-Control-Request-Method: POST' | tr -d '\r' | grep -i access-control-allow-origin
+# expect: Access-Control-Allow-Origin: https://biolabsresearch.co
+
+# Staff/admin paths must not open browser CORS to storefront origins
+curl -sSi -X OPTIONS https://crm.biolabsresearch.co/api/psp/settings \
+  -H 'Origin: https://biolabsresearch.co' | tr -d '\r' | grep -i access-control-allow-origin || echo 'OK: no ACAO on staff API'
 ```
 
 ---

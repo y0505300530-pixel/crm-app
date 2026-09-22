@@ -21,7 +21,14 @@ POST https://crm.biolabsresearch.co/api/checkout/abandon
 Content-Type: application/json
 ```
 
-CORS is open (`Access-Control-Allow-Origin: *`). `sendBeacon` is supported.
+CORS is an **exact Origin allowlist** (never `*`). Default allowed storefront origins:
+
+- `https://biolabsresearch.co`
+- `https://www.biolabsresearch.co`
+- `https://blrcommerce.io`
+- `https://www.blrcommerce.io`
+
+Override with `CORS_STOREFRONT_ORIGINS` (comma-separated) for staging. Disallowed / missing Origin → no `Access-Control-Allow-Origin` header. `sendBeacon` still works (fire-and-forget; response body is not read).
 
 ---
 
