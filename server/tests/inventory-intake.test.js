@@ -243,6 +243,86 @@ test("legacy stock_qty is preserved and ignored by on_hand", () => {
   assert.equal(banned.error, "public_name_banned");
 });
 
+test("PO #081226 is an unmapped in-transit line and posts one movement only after mapping", () => {
+  const { store, report } = seedStore();
+  assert.equal(report.mark_received_invoked, false);
+  assert.equal(report.on_hand_units, 400);
+  assert.equal(report.po_081226.status, "PAID_IN_TRANSIT");
+  assert.equal(report.po_081226.movements, 0);
+  assert.equal(report.po_081226.lines, 1);
+  assert.equal(report.po_081226.goods_total, "1140.00");
+  assert.equal(report.po_081226.sku_id, null);
+  assert.equal(store.listSkus().some((sku) => /nad/i.test(sku.code) || /nad/i.test(sku.name)), false);
+
+  const po = store.listPurchaseOrders().find((row) => row.po_id === "081226");
+  assert.equal(po.supplier, "COSMO VISIONS INC.");
+  assert.equal(po.dated, "2026-08-12");
+  assert.equal(po.routing_number, undefined);
+  assert.equal(po.account_number, undefined);
+  const line = store.listLines().find((row) => row.po_id === "081226");
+  assert.equal(line.supplier_name, "NAD+ 500mg");
+  assert.equal(line.qty, 30);
+  assert.equal(line.unit_cost_cents, 3800);
+  assert.equal(line.line_total_cents, 114000);
+  assert.equal(line.sku_id, null);
+
+  store.upsertPurchaseOrder({
+    po_id: "081226",
+    routing_number: "DO-NOT-STORE",
+    account_number: "DO-NOT-STORE",
+  });
+  const saved = store.listPurchaseOrders().find((row) => row.po_id === "081226");
+  assert.equal(saved.status, "PAID_IN_TRANSIT");
+  assert.equal(JSON.stringify(saved).includes("DO-NOT-STORE"), false);
+
+  const blocked = markPurchaseOrderReceived(store, "081226", "y0505300530@gmail.com", "2026-08-20T00:00:00.000Z");
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.error, "sku_mapping_required");
+  assert.equal(blocked.movements_created, 0);
+  assert.equal(store.listMovements().filter((row) => row.po_id === "081226").length, 0);
+  assert.equal(buildInventoryView(store).on_hand_units, 400);
+
+  store.upsertSku({
+    id: "sku:NAD-500",
+    code: "NAD-500",
+    name: "NAD+ 500mg",
+    created_at: "2026-08-12T00:00:00.000Z",
+  });
+  store.upsertLine({
+    id: "ln:081226:1",
+    po_id: "081226",
+    line_no: 1,
+    sku_id: "sku:NAD-500",
+    supplier_name: "NAD+ 500mg",
+    qty: 30,
+    unit_cost_cents: 3800,
+    line_total_cents: 114000,
+  });
+  const posted = markPurchaseOrderReceived(store, "081226", "y0505300530@gmail.com", "2026-08-20T00:00:00.000Z");
+  assert.equal(posted.ok, true);
+  assert.equal(posted.movements_created, 1);
+  const movement = store.listMovements().find((row) => row.po_id === "081226");
+  assert.equal(movement.type, "PO_INTAKE");
+  assert.equal(movement.qty, 30);
+  assert.equal(movement.created_by, "y0505300530@gmail.com");
+  assert.equal(movement.created_at, "2026-08-20T00:00:00.000Z");
+  assert.equal(movement.idempotency_key, "081226|sku:NAD-500|PO_INTAKE");
+  assert.equal(store.listPurchaseOrders().find((row) => row.po_id === "081226").status, "RECEIVED");
+
+  const repeat = markPurchaseOrderReceived(store, "081226", "other@biolabsresearch.co", "2026-08-21T00:00:00.000Z");
+  assert.equal(repeat.movements_created, 0);
+  assert.equal(repeat.reused, true);
+  assert.equal(store.listMovements().filter((row) => row.po_id === "081226").length, 1);
+  assert.equal(store.listMovements().find((row) => row.po_id === "081226").created_by, "y0505300530@gmail.com");
+
+  const reseed = seedInventory(store);
+  assert.equal(reseed.mark_received_invoked, false);
+  assert.equal(reseed.po_081226.movements, 1);
+  assert.equal(reseed.po_081226.status, "RECEIVED");
+  assert.equal(store.listLines().find((row) => row.po_id === "081226").sku_id, "sku:NAD-500");
+  assert.equal(store.listMovements().filter((row) => row.po_id === "081226").length, 1);
+});
+
 test("inventory HTTP is operator-only, idempotent, and does not expose catalog quantities", async () => {
   const inventory = createInventoryStore({ memoryOnly: true });
   await withServer({
@@ -261,6 +341,10 @@ test("inventory HTTP is operator-only, idempotent, and does not expose catalog q
     assert.equal(first.status, 200);
     assert.equal(firstBody.report.movements_created, 5);
     assert.equal(firstBody.report.on_hand_units, 400);
+    assert.equal(firstBody.report.po_081226.status, "PAID_IN_TRANSIT");
+    assert.equal(firstBody.report.po_081226.movements, 0);
+    assert.equal(firstBody.report.po_081226.goods_total, "1140.00");
+    assert.equal(firstBody.report.po_081226.sku_id, null);
     assert.equal(firstBody.report.pvc.movements, 0);
     assert.equal(firstBody.report.pvc.lines_booked, 28);
     assert.equal(firstBody.report.pvc.status, "PAID_IN_TRANSIT");
@@ -271,6 +355,12 @@ test("inventory HTTP is operator-only, idempotent, and does not expose catalog q
     assert.equal(secondBody.report.movements_created, 0);
     assert.equal(secondBody.report.movements_existing, 5);
     assert.equal(secondBody.inventory.on_hand_units, 400);
+    const ids = secondBody.inventory.purchase_orders.map((row) => row.po_id);
+    assert.deepEqual(ids, ["071326", "081226", "PVC-092326"]);
+    const aug = secondBody.inventory.purchase_orders.find((row) => row.po_id === "081226");
+    assert.equal(aug.lines[0].supplier_name, "NAD+ 500mg");
+    assert.equal(aug.lines[0].sku_id, null);
+    assert.equal(aug.movement_count, 0);
 
     const received = await fetch(`${base}/api/inventory/purchase-orders/PVC-092326/mark-received`, {
       method: "POST",

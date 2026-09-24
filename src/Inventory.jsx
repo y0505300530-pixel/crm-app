@@ -134,7 +134,7 @@ export default function Inventory() {
         <div>
           <h2 style={{ margin: "0 0 6px", fontSize: 22 }}>Inventory</h2>
           <p style={{ margin: 0, color: "#94A3B8", fontSize: 14, maxWidth: 760 }}>
-            On-hand is the sum of inventory movements. PO #071326 is already received. PO #PVC-092326 is booked as invoice lines only. Mark Received does not post stock while those lines are still unmapped.
+            On-hand is the sum of inventory movements. PO #071326 is already received. PO #081226 and PO #PVC-092326 are booked as invoice lines only. Mark Received does not post stock while a line is still unmapped.
           </p>
         </div>
         <button

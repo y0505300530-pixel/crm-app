@@ -39,6 +39,19 @@ export const PVC_ALIAS_MAP = {
   Semaglutide: "G1-S",
 };
 
+/** In transit. NAD+ 500mg stays a supplier name until Yehuda approves a SKU. */
+export const COSMO_081226 = {
+  po_id: "081226",
+  supplier: "COSMO VISIONS INC.",
+  dated: "2026-08-12",
+  status: "PAID_IN_TRANSIT",
+  created_at: "2026-08-12T00:00:00.000Z",
+  supplier_name: "NAD+ 500mg",
+  qty: 30,
+  unit_cost_cents: 3800,
+  line_total_cents: 114000,
+};
+
 export const PVC_PO = {
   po_id: "PVC-092326",
   supplier: "Pure Vision Consulting",
@@ -250,8 +263,46 @@ export function applyPvcPurchaseOrder(store, rawLines) {
 }
 
 /**
+ * PO #081226: one unmapped supplier line, no SKU, no movement.
+ * Mark Received is not called. A later receipt posts one PO_INTAKE only after sku_id is set.
+ */
+export function applyPo081226(store) {
+  const poId = COSMO_081226.po_id;
+  const existing = store.listPurchaseOrders().find((row) => row.po_id === poId);
+  const existingLine = store.listLines().find((row) => row.po_id === poId && Number(row.line_no) === 1);
+  if (COSMO_081226.qty * COSMO_081226.unit_cost_cents !== COSMO_081226.line_total_cents) {
+    throw new Error("po_081226_total_mismatch");
+  }
+  store.upsertPurchaseOrder({
+    po_id: poId,
+    po_number: poId,
+    supplier: COSMO_081226.supplier,
+    dated: COSMO_081226.dated,
+    status: existing?.status === "RECEIVED" ? "RECEIVED" : COSMO_081226.status,
+    ship_to: existing?.ship_to ?? null,
+    po_level_costs: [],
+    alias_map: null,
+    notes: "Supplier name NAD+ 500mg is not an internal SKU. sku_id stays null until Yehuda approves the marketing map. No movements until Mark Received after that mapping.",
+    created_by: existing?.created_by || SEED_ACTOR,
+    created_at: existing?.created_at || COSMO_081226.created_at,
+  });
+  store.upsertLine({
+    id: `ln:${poId}:1`,
+    po_id: poId,
+    line_no: 1,
+    sku_id: existingLine?.sku_id || null,
+    supplier_name: COSMO_081226.supplier_name,
+    qty: COSMO_081226.qty,
+    unit_cost_cents: COSMO_081226.unit_cost_cents,
+    line_total_cents: COSMO_081226.line_total_cents,
+    suggested_internal_code_note: "",
+  });
+  return { lines_booked: 1 };
+}
+
+/**
  * Idempotent intake. PO #071326 gets five PO_INTAKE rows.
- * PO #PVC-092326 gets a header and lines only — mark-received is not called.
+ * PO #081226 and PO #PVC-092326 get lines only — mark-received is not called.
  */
 export function seedInventory(store, opts = {}) {
   let movementsCreated = 0;
@@ -330,9 +381,12 @@ export function seedInventory(store, opts = {}) {
     }
   }
   const pvc = applyPvcPurchaseOrder(store, pvcFile.lines || []);
+  applyPo081226(store);
   const pvcMovements = store.listMovements().filter((row) => row.po_id === PVC_PO.po_id).length;
+  const augMovements = store.listMovements().filter((row) => row.po_id === COSMO_081226.po_id).length;
   const view = buildInventoryView(store);
   const cosmo = view.purchase_orders.find((row) => row.po_id === COSMO_PO.po_id);
+  const aug = view.purchase_orders.find((row) => row.po_id === COSMO_081226.po_id);
   const pvcPo = view.purchase_orders.find((row) => row.po_id === PVC_PO.po_id);
 
   return {
@@ -348,6 +402,14 @@ export function seedInventory(store, opts = {}) {
       movements: cosmo?.movement_count || 0,
       goods_total: cosmo?.goods_total || null,
       total: cosmo?.total || null,
+    },
+    po_081226: {
+      po_id: COSMO_081226.po_id,
+      status: aug?.status || null,
+      movements: augMovements,
+      lines: aug?.lines?.length || 0,
+      goods_total: aug?.goods_total || null,
+      sku_id: aug?.lines?.[0]?.sku_id ?? null,
     },
     pvc: {
       po_id: PVC_PO.po_id,

@@ -54,6 +54,15 @@ function publicNameAllowed(name) {
   return !PUBLIC_NAME_BANNED.test(String(name || ""));
 }
 
+function stripBankDetails(row) {
+  if (!row || typeof row !== "object") return;
+  for (const key of Object.keys(row)) {
+    if (/(bank|routing|iban|swift|\baba\b|account_number|account_no|^account$)/i.test(key)) {
+      delete row[key];
+    }
+  }
+}
+
 function normalizeLoaded(parsed) {
   const data = emptyData();
   data.skus = Array.isArray(parsed?.skus) ? parsed.skus : [];
@@ -73,6 +82,8 @@ function normalizeLoaded(parsed) {
   for (const sku of data.skus) {
     if (sku && Object.prototype.hasOwnProperty.call(sku, "on_hand")) delete sku.on_hand;
   }
+  for (const po of data.purchase_orders) stripBankDetails(po);
+  for (const line of data.purchase_order_lines) stripBankDetails(line);
   return data;
 }
 
@@ -159,6 +170,7 @@ export function createInventoryStore(opts = {}) {
         next.stock_qty = existing.stock_qty;
       }
       delete next.on_hand;
+      stripBankDetails(next);
       if (idx === -1) data.purchase_orders.push(next);
       else data.purchase_orders[idx] = next;
       persist();
@@ -188,6 +200,7 @@ export function createInventoryStore(opts = {}) {
       };
       delete next.on_hand;
       delete next.stock_qty;
+      stripBankDetails(next);
       if (idx === -1) data.purchase_order_lines.push(next);
       else data.purchase_order_lines[idx] = next;
       persist();
