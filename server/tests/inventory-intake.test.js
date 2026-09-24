@@ -1,0 +1,297 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { corsHeadersForRequest, isStorefrontApiPath } from "../lib/cors.js";
+import {
+  buildInventoryView,
+  createInventoryStore,
+  markPurchaseOrderReceived,
+} from "../lib/inventory.js";
+import { applyPvcPurchaseOrder, seedInventory } from "../lib/inventory-seed.js";
+import { startCrmServer } from "../index.js";
+
+const PUBLIC_NAME_BANNED = /retatrutide|\breta\b|tirzepatide|semaglutide/i;
+
+function seedStore() {
+  const store = createInventoryStore({ memoryOnly: true });
+  const report = seedInventory(store);
+  return { store, report };
+}
+
+async function withServer(deps, fn) {
+  const server = await startCrmServer(0, deps);
+  const { port } = server.address();
+  try {
+    return await fn(port);
+  } finally {
+    await new Promise((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    });
+  }
+}
+
+test("PO #071326 intake is idempotent and on_hand totals 400", () => {
+  const { store, report } = seedStore();
+  const again = seedInventory(store);
+
+  assert.equal(report.mark_received_invoked, false);
+  assert.equal(again.mark_received_invoked, false);
+  assert.equal(report.movements_created, 5);
+  assert.equal(again.movements_created, 0);
+  assert.equal(again.movements_existing, 5);
+  assert.equal(report.on_hand_units, 400);
+  assert.deepEqual(report.on_hand_by_sku, {
+    "G3-R-10": 100,
+    "G3-R-20": 50,
+    "TES-10": 100,
+    "WOL-10": 100,
+    GLOW: 50,
+  });
+
+  const movements = store.listMovements();
+  assert.equal(movements.length, 5);
+  const keys = movements.map((row) => row.idempotency_key);
+  assert.equal(new Set(keys).size, 5);
+  for (const row of movements) {
+    assert.equal(row.po_id, "071326");
+    assert.equal(row.type, "PO_INTAKE");
+    assert.equal(row.created_by, "inventory-seed");
+    assert.equal(row.created_at, "2026-07-13T00:00:00.000Z");
+    assert.ok(row.sku_id);
+  }
+
+  const view = buildInventoryView(store);
+  assert.equal(view.on_hand_units, 400);
+  assert.equal(view.value_at_cost, "19000.00");
+  assert.equal(view.storefront_catalog_updated, false);
+  assert.equal(view.public_quantity_exposed, false);
+  const byCode = Object.fromEntries(view.skus.map((sku) => [sku.code, sku]));
+  assert.equal(byCode["G3-R-10"].weighted_avg_unit_cost, "40.00");
+  assert.equal(byCode["G3-R-10"].value_at_cost, "4000.00");
+  assert.equal(byCode["G3-R-20"].weighted_avg_unit_cost, "70.00");
+  assert.equal(byCode["TES-10"].weighted_avg_unit_cost, "35.00");
+  assert.equal(byCode["WOL-10"].weighted_avg_unit_cost, "39.00");
+  assert.equal(byCode.GLOW.name, "GLOW");
+  assert.equal(byCode.GLOW.weighted_avg_unit_cost, "82.00");
+  assert.deepEqual(byCode["G3-R-10"].linked_pos, ["071326"]);
+  for (const sku of view.skus) {
+    assert.equal(PUBLIC_NAME_BANNED.test(sku.name), false);
+    assert.equal(PUBLIC_NAME_BANNED.test(sku.code), false);
+    assert.equal(Object.hasOwn(sku, "stock_qty"), false);
+    assert.equal(sku.on_hand_source, "sum(inventory_movements.qty)");
+  }
+
+  const cosmo = view.purchase_orders.find((row) => row.po_id === "071326");
+  assert.equal(cosmo.status, "RECEIVED");
+  assert.equal(cosmo.supplier, "COSMO VISIONS INC.");
+  assert.equal(cosmo.dated, "2026-07-13");
+  assert.equal(cosmo.goods_total, "19000.00");
+  assert.equal(cosmo.total, "19500.00");
+  assert.equal(cosmo.po_level_costs[0].label, "COA");
+  assert.equal(cosmo.po_level_costs[0].amount, "500.00");
+  assert.equal(cosmo.movement_count, 5);
+  assert.equal(cosmo.can_mark_received, false);
+});
+
+test("PO #PVC-092326 books no movements and does not create SKUs from alias names", () => {
+  const { store } = seedStore();
+  const file = JSON.parse(readFileSync(new URL("../../data/pvc-092326-lines.json", import.meta.url), "utf8"));
+  assert.deepEqual(file.lines, []);
+  assert.equal(file.targets.goods_total, "6640.50");
+  assert.equal(file.targets.units, 460);
+  assert.equal(file.targets.line_count, 28);
+
+  const codes = store.listSkus().map((sku) => sku.code).sort();
+  assert.deepEqual(codes, ["G3-R-10", "G3-R-20", "GLOW", "TES-10", "WOL-10"]);
+
+  const pvc = store.listPurchaseOrders().find((row) => row.po_id === "PVC-092326");
+  assert.equal(pvc.status, "PAID_IN_TRANSIT");
+  assert.equal(pvc.ship_to, "PENDING");
+  assert.equal(pvc.supplier, "Pure Vision Consulting");
+  assert.equal(pvc.dated, "2026-09-23");
+  assert.deepEqual(pvc.alias_map, {
+    R3TA: "G3-R",
+    Tirzepatide: "G2-T",
+    Semaglutide: "G1-S",
+  });
+  assert.equal(store.listLines().filter((line) => line.po_id === "PVC-092326").length, 0);
+  assert.equal(store.listMovements().filter((row) => row.po_id === "PVC-092326").length, 0);
+
+  applyPvcPurchaseOrder(store, [{
+    line_no: 1,
+    supplier_name: "Tirzepatide 10mg",
+    qty: 10,
+    unit_cost: "20.00",
+    line_total: "200.00",
+    sku_id: "sku:SHOULD-NOT-STICK",
+  }]);
+  assert.equal(store.listSkus().length, 5);
+  const line = store.listLines().find((row) => row.po_id === "PVC-092326");
+  assert.equal(line.supplier_name, "Tirzepatide 10mg");
+  assert.equal(line.sku_id, null);
+  assert.equal(store.listMovements().filter((row) => row.po_id === "PVC-092326").length, 0);
+
+  const blocked = markPurchaseOrderReceived(store, "PVC-092326", "y0505300530@gmail.com", "2026-09-24T12:00:00.000Z");
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.error, "sku_mapping_required");
+  assert.equal(blocked.movements_created, 0);
+  assert.equal(store.listPurchaseOrders().find((row) => row.po_id === "PVC-092326").status, "PAID_IN_TRANSIT");
+  assert.equal(store.listMovements().length, 5);
+
+  applyPvcPurchaseOrder(store, [{
+    line_no: 1,
+    supplier_name: "Tirzepatide 10mg",
+    qty: 10,
+    unit_cost: "20.00",
+    line_total: "200.00",
+  }]);
+  assert.equal(store.listLines().filter((row) => row.po_id === "PVC-092326").length, 1);
+});
+
+test("Mark Received posts movements only when invoked, then refuses a duplicate", () => {
+  const { store } = seedStore();
+  assert.equal(store.listMovements().length, 5);
+  store.upsertPurchaseOrder({
+    po_id: "TEST-RECV",
+    po_number: "TEST-RECV",
+    supplier: "Test Supplier",
+    dated: "2026-09-24",
+    status: "PAID_IN_TRANSIT",
+    ship_to: "PENDING",
+    po_level_costs: [],
+    alias_map: null,
+    created_by: "test",
+    created_at: "2026-09-24T00:00:00.000Z",
+  });
+  store.upsertLine({
+    id: "ln:TEST-RECV:sku:GLOW",
+    po_id: "TEST-RECV",
+    line_no: 1,
+    sku_id: "sku:GLOW",
+    supplier_name: null,
+    qty: 2,
+    unit_cost_cents: 8200,
+    line_total_cents: 16400,
+  });
+  assert.equal(store.listMovements().length, 5);
+
+  const posted = markPurchaseOrderReceived(store, "TEST-RECV", "y0505300530@gmail.com", "2026-09-24T15:00:00.000Z");
+  assert.equal(posted.movements_created, 1);
+  assert.equal(store.listMovements().length, 6);
+  const movement = store.listMovements().find((row) => row.po_id === "TEST-RECV");
+  assert.equal(movement.created_by, "y0505300530@gmail.com");
+  assert.equal(movement.created_at, "2026-09-24T15:00:00.000Z");
+  assert.equal(movement.type, "PO_INTAKE");
+  assert.equal(movement.idempotency_key, "TEST-RECV|sku:GLOW|PO_INTAKE");
+  assert.equal(store.listPurchaseOrders().find((row) => row.po_id === "TEST-RECV").status, "RECEIVED");
+
+  const again = markPurchaseOrderReceived(store, "TEST-RECV", "other@biolabsresearch.co", "2026-09-24T16:00:00.000Z");
+  assert.equal(again.movements_created, 0);
+  assert.equal(again.reused, true);
+  assert.equal(store.listMovements().length, 6);
+  assert.equal(store.listMovements().find((row) => row.po_id === "TEST-RECV").created_by, "y0505300530@gmail.com");
+  assert.equal(buildInventoryView(store).skus.find((sku) => sku.code === "GLOW").on_hand, 52);
+});
+
+test("legacy stock_qty is preserved and ignored by on_hand", () => {
+  const dir = mkdtempSync(join(tmpdir(), "crm-inv-"));
+  const file = join(dir, "inventory.json");
+  writeFileSync(file, JSON.stringify({
+    skus: [{ id: "sku:G3-R-10", code: "G3-R-10", name: "G3-R 10mg", stock_qty: 7, on_hand: 999 }],
+    purchase_orders: [],
+    purchase_order_lines: [],
+    inventory_movements: [],
+  }));
+  const store = createInventoryStore({ filePath: file });
+  seedInventory(store);
+  const raw = JSON.parse(readFileSync(file, "utf8"));
+  const sku = raw.skus.find((row) => row.code === "G3-R-10");
+  assert.equal(sku.stock_qty, 7);
+  assert.equal(sku.on_hand, undefined);
+  const view = buildInventoryView(store);
+  const row = view.skus.find((item) => item.code === "G3-R-10");
+  assert.equal(row.on_hand, 100);
+  assert.equal(row.legacy_stock_qty, 7);
+  assert.equal(row.legacy_stock_readonly, true);
+  const rejected = store.upsertSku({ code: "G3-R-10", name: "G3-R 10mg", stock_qty: 999 });
+  assert.equal(rejected.ok, true);
+  assert.equal(JSON.parse(readFileSync(file, "utf8")).skus.find((item) => item.code === "G3-R-10").stock_qty, 7);
+  const banned = store.upsertSku({ code: "RETA-1", name: "Retatrutide 10mg" });
+  assert.equal(banned.ok, false);
+  assert.equal(banned.error, "public_name_banned");
+});
+
+test("inventory HTTP is operator-only, idempotent, and does not expose catalog quantities", async () => {
+  const inventory = createInventoryStore({ memoryOnly: true });
+  await withServer({
+    inventory,
+    checkCrmSession: async (token) => (
+      token === "good-session" ? { user: { email: "y0505300530@gmail.com", name: "Y Admin" } } : false
+    ),
+  }, async (port) => {
+    const base = `http://127.0.0.1:${port}`;
+    const open = await fetch(`${base}/api/inventory`);
+    assert.equal(open.status, 401);
+
+    const headers = { Authorization: "Bearer good-session", "Content-Type": "application/json" };
+    const first = await fetch(`${base}/api/inventory/intake`, { method: "POST", headers });
+    const firstBody = await first.json();
+    assert.equal(first.status, 200);
+    assert.equal(firstBody.report.movements_created, 5);
+    assert.equal(firstBody.report.on_hand_units, 400);
+    assert.equal(firstBody.report.pvc.movements, 0);
+    assert.equal(firstBody.report.pvc.status, "PAID_IN_TRANSIT");
+    assert.equal(firstBody.report.mark_received_invoked, false);
+
+    const second = await fetch(`${base}/api/inventory/intake`, { method: "POST", headers });
+    const secondBody = await second.json();
+    assert.equal(secondBody.report.movements_created, 0);
+    assert.equal(secondBody.report.movements_existing, 5);
+    assert.equal(secondBody.inventory.on_hand_units, 400);
+
+    const received = await fetch(`${base}/api/inventory/purchase-orders/PVC-092326/mark-received`, {
+      method: "POST",
+      headers,
+    });
+    const receivedBody = await received.json();
+    assert.equal(received.status, 409);
+    assert.equal(receivedBody.movements_created, 0);
+    assert.equal(receivedBody.error, "no_lines");
+    assert.equal(receivedBody.inventory.on_hand_units, 400);
+    assert.equal(receivedBody.inventory.purchase_orders.find((row) => row.po_id === "PVC-092326").status, "PAID_IN_TRANSIT");
+
+    const stock = await fetch(`${base}/api/inventory/skus/sku:G3-R-10/stock`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ stock_qty: 1 }),
+    });
+    const stockBody = await stock.json();
+    assert.equal(stock.status, 409);
+    assert.equal(stockBody.error, "legacy_stock_qty_readonly");
+    const afterStock = await fetch(`${base}/api/inventory`, { headers });
+    const afterBody = await afterStock.json();
+    assert.equal(afterBody.skus.find((sku) => sku.code === "G3-R-10").on_hand, 100);
+    assert.equal(Object.hasOwn(afterBody.skus[0], "stock_qty"), false);
+
+    const products = await fetch(`${base}/api/products`);
+    assert.equal(products.status, 404);
+    const productsBody = await products.json();
+    assert.equal(productsBody.on_hand, undefined);
+    assert.equal(JSON.stringify(productsBody).includes("on_hand"), false);
+
+    const onHand = await fetch(`${base}/api/inventory/on-hand`, { headers });
+    const onHandBody = await onHand.json();
+    assert.equal(onHandBody.on_hand_units, 400);
+    assert.equal(onHandBody.public_quantity_exposed, false);
+    assert.equal(onHandBody.storefront_catalog_updated, false);
+  });
+
+  assert.equal(isStorefrontApiPath("/api/inventory"), false);
+  assert.equal(isStorefrontApiPath("/api/inventory/on-hand"), false);
+  assert.deepEqual(
+    corsHeadersForRequest({ headers: { origin: "https://biolabsresearch.co" } }, "/api/inventory", {}),
+    {},
+  );
+});
