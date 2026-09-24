@@ -56,7 +56,17 @@ export function sessionBodyOk(data) {
   return false;
 }
 
-export async function defaultCrmSessionCheck(token, opts = {}) {
+export function actorFromSession(data) {
+  if (!data || typeof data !== "object") return "";
+  const user = data.user && typeof data.user === "object" ? data.user : null;
+  const email = (user && user.email) || data.email;
+  if (typeof email === "string" && email.includes("@")) return email.trim().slice(0, 160);
+  const name = (user && user.name) || data.name;
+  if (typeof name === "string" && name.trim()) return name.trim().slice(0, 80);
+  return "";
+}
+
+export async function fetchCrmSession(token, opts = {}) {
   const env = opts.env || process.env;
   const fetchImpl = opts.fetchImpl || globalThis.fetch;
   const base = String(env.CRM_AUTH_URL || "http://127.0.0.1:3001").replace(/\/$/, "");
@@ -74,19 +84,52 @@ export async function defaultCrmSessionCheck(token, opts = {}) {
       },
       signal: ctrl.signal,
     });
-    if (!res || !res.ok) return false;
+    if (!res || !res.ok) return { ok: false, data: null };
     let data = null;
     try {
       data = await res.json();
     } catch {
       data = null;
     }
-    return sessionBodyOk(data);
+    return { ok: sessionBodyOk(data), data };
   } catch {
-    return false;
+    return { ok: false, data: null };
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function defaultCrmSessionCheck(token, opts = {}) {
+  const session = await fetchCrmSession(token, opts);
+  return session.ok;
+}
+
+/**
+ * Same gate as operatorAuthorized, plus the staff identity to store on mark-paid / ship.
+ * Marketing-key callers are recorded as "marketing-key". A CRM session records the email when the session body has one.
+ */
+export async function resolveOperator(req, opts = {}) {
+  const env = opts.env || process.env;
+  if (marketingDigestKeyOk(req, env)) {
+    return { ok: true, actor: "marketing-key", via: "marketing-key" };
+  }
+  const token = bearerToken(req);
+  if (!token) return { ok: false, actor: null, via: null };
+  if (typeof opts.checkCrmSession === "function") {
+    try {
+      const result = await opts.checkCrmSession(token);
+      if (!result) return { ok: false, actor: null, via: null };
+      const actor = result && typeof result === "object"
+        ? (actorFromSession(result) || "crm-session")
+        : "crm-session";
+      return { ok: true, actor, via: "crm-session" };
+    } catch {
+      return { ok: false, actor: null, via: null };
+    }
+  }
+  const session = await fetchCrmSession(token, opts);
+  if (!session.ok) return { ok: false, actor: null, via: null };
+  return { ok: true, actor: actorFromSession(session.data) || "crm-session", via: "crm-session" };
 }
 
 export async function operatorAuthorized(req, opts = {}) {

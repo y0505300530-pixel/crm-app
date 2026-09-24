@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<link rel="manifest" href="/crm/manifest.json">
+<meta name="theme-color" content="#1B2A4A">
+<link rel="icon" href="/crm/assets/biolabs-logo.png">
+<title>Crypto payments — BioLabs CRM</title>
+<link rel="stylesheet" href="crm.css?v=05fa5a1bda">
+<style>
+.content{flex:1;overflow-y:auto;padding:20px 24px}
+.table-card{background:#fff;border:1px solid #E8ECF4;border-radius:14px;overflow:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:10px 12px;font-size:11px;color:#5A6685;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #E8ECF4}
+td{padding:10px 12px;border-bottom:1px solid #F0F2FA;vertical-align:top}
+.muted{color:#5A6685;font-size:12px;margin:8px 0 16px}
+.warn{color:#B45309;font-weight:700}
+.ok{color:#145C2C;font-weight:700}
+.row{cursor:pointer}
+.detail{background:#F8FAFC;padding:14px 16px}
+.btns{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+input.tx{padding:8px 10px;border:1px solid #E8ECF4;border-radius:8px;min-width:280px}
+.search{display:flex;gap:8px;margin-bottom:14px}
+.search input{padding:8px 10px;border:1px solid #E8ECF4;border-radius:8px;min-width:260px}
+</style>
+</head>
+<body>
+<script src="crm-utils.js"></script>
+<script src="crm.js?v=05fa5a1bda-umg"></script>
+<script src="auth.js"></script>
+<div class="app-wrapper">
+  <div class="sidebar"><div id="crm-nav" class="crm-nav"></div></div>
+  <div class="main">
+    <div class="topbar"><div class="topbar-title">Crypto payments <span>— awaiting USDT, ship blocked until paid</span></div></div>
+    <div class="content">
+      <p class="muted">Storefront posts POST /api/checkout/crypto on the sidecar (:8787). Nothing here is a completed payment until you mark it paid after an on-chain check. Mark paid does not ship. RUO catalog only. Deposit addresses are env on the host, not on this page.</p>
+      <form class="search" id="searchForm">
+        <input id="q" placeholder="Search order ref, email, tx hash" />
+        <button class="btn btn-primary" type="submit">Search</button>
+      </form>
+      <div class="table-card"><table>
+        <thead><tr><th>Order ref</th><th>Status</th><th>Amount due</th><th>Customer</th><th>Fulfillment</th><th>Created</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table></div>
+    </div>
+  </div>
+</div>
+<script>
+renderNav('crypto-orders');
+let orders = [];
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (ch) {
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+  });
+}
+function money(a, c) {
+  const n = Number(a) || 0;
+  if (c === 'USDT') return n.toFixed(2) + ' USDT';
+  return n.toLocaleString('en-US', { style: 'currency', currency: c || 'USD' });
+}
+function when(v) {
+  if (!v) return '—';
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? '—' : d.toLocaleString();
+}
+function nameOf(c) {
+  c = c || {};
+  return [c.first_name, c.last_name].filter(Boolean).join(' ') || '—';
+}
+
+function detailHtml(o) {
+  const c = o.customer || {};
+  const items = (o.items || []).map(function (it) {
+    return (it.qty || 1) + '× ' + (it.name || it.sku || 'item');
+  }).join(', ') || '—';
+  const paid = o.crypto || {};
+  const ful = (o.fulfillment && o.fulfillment.status) || 'blocked';
+  let actions = '';
+  if (o.status === 'awaiting_crypto') {
+    actions = '<div class="btns"><input class="tx" data-tx="' + esc(o.id) + '" placeholder="Tx hash (optional)" />' +
+      '<button class="btn btn-primary" type="button" data-pay="' + esc(o.id) + '">Mark paid</button>' +
+      '<button class="btn btn-secondary" type="button" disabled>Shipping blocked until paid</button></div>';
+  } else if (o.status === 'crypto_paid' && ful !== 'shipped') {
+    actions = '<div class="btns"><span class="ok">Paid ' + esc(when(paid.markedPaidAt)) + ' by ' + esc(paid.markedPaidBy || 'staff') +
+      '. Tx ' + esc(paid.txHash || '—') + '.</span>' +
+      '<button class="btn btn-secondary" type="button" data-ship="' + esc(o.id) + '">Mark shipped</button></div>';
+  } else if (ful === 'shipped') {
+    actions = '<div class="muted">Shipped ' + esc(when(o.fulfillment.shippedAt)) + ' by ' + esc(o.fulfillment.shippedBy || 'staff') + '.</div>';
+  }
+  return '<tr class="detail-row"><td colspan="6" class="detail">' +
+    '<div><strong>' + esc(o.id) + '</strong> · memo <strong>' + esc(o.orderRef) + '</strong></div>' +
+    '<div>' + esc(nameOf(c)) + ' · ' + esc(c.email || '') + ' · ' + esc(c.phone || 'no phone') + '</div>' +
+    '<div>' + esc([c.address, c.city, c.state, c.zip, c.country].filter(Boolean).join(', ')) + '</div>' +
+    '<div>' + esc(items) + '</div>' + actions + '</td></tr>';
+}
+
+function draw() {
+  const html = orders.map(function (o) {
+    const ful = (o.fulfillment && o.fulfillment.status) || 'blocked';
+    const st = o.status === 'crypto_paid' ? 'ok' : 'warn';
+    return '<tr class="row" data-id="' + esc(o.id) + '"><td>' + esc(o.orderRef || o.id) + '</td><td class="' + st + '">' +
+      esc(o.status || '') + '</td><td>' + money(o.amountDue || o.amount, o.currency) + ' USDT</td><td>' +
+      esc((o.customer && o.customer.email) || '—') + '</td><td>' + esc(ful) + '</td><td>' + esc(when(o.createdAt)) + '</td></tr>';
+  }).join('');
+  document.getElementById('rows').innerHTML = html || '<tr><td colspan="6">No crypto orders yet. POST /api/checkout/crypto from the storefront.</td></tr>';
+}
+
+async function reload() {
+  const q = document.getElementById('q').value.trim();
+  const path = '/api/store-orders?paymentMethod=crypto' + (q ? '&q=' + encodeURIComponent(q) : '');
+  const data = await api(path, { toast: false });
+  orders = data.orders || [];
+  draw();
+}
+
+document.getElementById('searchForm').onsubmit = function (e) {
+  e.preventDefault();
+  reload();
+};
+
+document.getElementById('rows').onclick = async function (e) {
+  const pay = e.target.closest('[data-pay]');
+  const shipBtn = e.target.closest('[data-ship]');
+  if (pay) {
+    const id = pay.getAttribute('data-pay');
+    const input = document.querySelector('[data-tx="' + id + '"]');
+    const txHash = input ? input.value.trim() : '';
+    await api('/api/store-orders/' + encodeURIComponent(id) + '/mark-paid', { method: 'POST', body: { txHash: txHash } });
+    await reload();
+    return;
+  }
+  if (shipBtn) {
+    const id = shipBtn.getAttribute('data-ship');
+    await api('/api/store-orders/' + encodeURIComponent(id) + '/ship', { method: 'POST' });
+    await reload();
+    return;
+  }
+  const tr = e.target.closest('tr[data-id]');
+  if (!tr) return;
+  const id = tr.getAttribute('data-id');
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains('detail-row')) {
+    next.remove();
+    return;
+  }
+  document.querySelectorAll('.detail-row').forEach(function (n) { n.remove(); });
+  const o = orders.find(function (x) { return x.id === id; });
+  if (!o) return;
+  tr.insertAdjacentHTML('afterend', detailHtml(o));
+};
+
+reload().catch(function () {
+  document.getElementById('rows').innerHTML = '<tr><td colspan="6">Cannot reach /api/store-orders — check crm-umg and the nginx /api/store-orders prefix</td></tr>';
+});
+</script>
+</body>
+</html>

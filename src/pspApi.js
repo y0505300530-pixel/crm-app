@@ -58,3 +58,26 @@ export async function fetchAbandonedCheckouts() {
   const res = await fetch("/api/checkout/abandon", { headers: crmAuthHeaders() });
   return json(res);
 }
+
+export async function fetchCryptoOrders(query = "") {
+  const qs = query ? `?paymentMethod=crypto&q=${encodeURIComponent(query)}` : "?paymentMethod=crypto";
+  const res = await fetch(`/api/store-orders${qs}`, { headers: crmAuthHeaders() });
+  return json(res);
+}
+
+export async function markCryptoOrderPaid(id, txHash) {
+  const res = await fetch(`/api/store-orders/${encodeURIComponent(id)}/mark-paid`, {
+    method: "POST",
+    headers: crmAuthHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ txHash: txHash || "" }),
+  });
+  return json(res);
+}
+
+export async function shipStoreOrder(id) {
+  const res = await fetch(`/api/store-orders/${encodeURIComponent(id)}/ship`, {
+    method: "POST",
+    headers: crmAuthHeaders(),
+  });
+  return json(res);
+}

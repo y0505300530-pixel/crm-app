@@ -122,6 +122,12 @@ export function createStore(opts = {}) {
       const order = data.orders.find((o) => o.id === id);
       return order ? clone(order) : null;
     },
+    getOrderByRef(ref) {
+      const want = String(ref || "").trim();
+      if (!want) return null;
+      const order = data.orders.find((o) => o.orderRef === want);
+      return order ? clone(order) : null;
+    },
     getOrderByIdempotency(key) {
       if (!key) return null;
       const order = data.orders.find((o) => o.idempotencyKey === key);

@@ -89,6 +89,8 @@ curl -sS http://127.0.0.1:8787/api/psp/health
 
 Until that env is `true`, storefront must call **`/api/checkout/quote`**, not charge.
 
+USDT checkout is a separate path and does not flip this flag: `POST /api/checkout/crypto` stays available in quote mode. See [STOREFRONT_HOOK.md](./STOREFRONT_HOOK.md).
+
 ---
 
 ## Admin email hook
