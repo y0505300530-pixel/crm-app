@@ -2,6 +2,7 @@ import { useState } from "react";
 import ProcessorSettings from "./ProcessorSettings.jsx";
 import StoreOrders from "./StoreOrders.jsx";
 import AbandonedCheckouts from "./AbandonedCheckouts.jsx";
+import CryptoOrders from "./CryptoOrders.jsx";
 
 const USERS = [
   { email: "sophia@blitz-affiliates.marketing", password: "Odessa2020", name: "Sophia" },
@@ -297,6 +298,7 @@ function Dashboard({ user, onLogout }) {
               ["orders", "Store orders"],
               ["processors", "Processors"],
               ["abandoned", "Abandoned checkout"],
+              ["crypto", "Crypto payments"],
             ].map(([id, label]) => (
               <button key={id} onClick={() => setView(id)} style={{
                 padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600,
@@ -329,6 +331,11 @@ function Dashboard({ user, onLogout }) {
       {view === "abandoned" && (
         <main style={{ maxWidth: 1240, margin: "0 auto", padding: "28px 32px" }}>
           <AbandonedCheckouts />
+        </main>
+      )}
+      {view === "crypto" && (
+        <main style={{ maxWidth: 1240, margin: "0 auto", padding: "28px 32px" }}>
+          <CryptoOrders />
         </main>
       )}
       {view === "paytrack" && <main style={{ maxWidth: 1240, margin: "0 auto", padding: "28px 32px" }}>

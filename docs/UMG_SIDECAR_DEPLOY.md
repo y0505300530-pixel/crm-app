@@ -68,6 +68,10 @@ Environment=CRM_PUBLIC_URL=https://crm.biolabsresearch.co
 Environment=STORE_PATH=/var/lib/crm-umg/store.json
 Environment=UMG_ENV_PATH=/root/secure-quarantine-20260917-audit/umg.env
 Environment=PAYMENTS_ENABLED=false
+# Deposit addresses for POST /api/checkout/crypto. Set on the host only — never commit the values.
+# A non-address (including a private key) is ignored and that network is returned as null.
+# Environment=CRYPTO_USDT_ERC=
+# Environment=CRYPTO_USDT_TRC=
 # Do not put UMG_API_SECRET in this file. Do not set UMG_DRY_RUN=1.
 # Quote mode is the storefront SoT. Set PAYMENTS_ENABLED=true only when card capture is unlocked.
 ExecStart=/usr/bin/node /opt/crm-umg/server/index.js
@@ -133,6 +137,8 @@ If `$forwarded_for_value` is not defined on this host, use `$proxy_add_x_forward
 | `/api/checkout/abandon` | POST public (CORS allowlist); GET operator-only | abandoned-checkout beacon + CRM list — see [ABANDONED_CHECKOUT.md](./ABANDONED_CHECKOUT.md) |
 | `/api/checkout/leads-digest` | GET + `X-Marketing-Key` | Marketing day digest — see [MARKETING-LEADS-DIGEST.md](./MARKETING-LEADS-DIGEST.md) |
 | `/api/checkout/charge` | yes | UMG cascade, gated by `PAYMENTS_ENABLED` (default **false** → HTTP 503) |
+| `/api/checkout/crypto` | POST public; GET `/:orderRef` public | Pending USDT checkout. See [CRYPTO_CHECKOUT.md](./CRYPTO_CHECKOUT.md) and [STOREFRONT_HOOK.md](./STOREFRONT_HOOK.md). |
+| `/api/store-orders/:id/mark-paid` and `/ship` | operator-only | Crypto mark-paid does not ship. Ship returns 409 until `crypto_paid`. |
 | `/api/webhooks/umg` | yes | UMG portal callback |
 | `/api/psp/health` | yes | sidecar health (not `/api/health`) |
 | `/api/psp/settings` | GET/PUT operator-only | Processors UI. CRM bearer or `X-Marketing-Key` |
@@ -185,6 +191,7 @@ All paths are under **`/var/www/mastersol/html/CRM`** (served as `/crm/…`).
 | `processors.html` | **New file.** Drop in `docs/live-crm/processors.html` from this repo. |
 | `psp-clearing.html` | **New file.** Drop in `docs/live-crm/psp-clearing.html`. |
 | `abandoned-checkout.html` | **New file.** Drop in `docs/live-crm/abandoned-checkout.html`. |
+| `crypto-orders.html` | **New file.** Drop in `docs/live-crm/crypto-orders.html`. Nav key `crypto-orders`. Leave `store-orders.html` (3001 fulfillment) alone. |
 | `store-orders.html` | Leave as-is (shop orders). Optional later: a “Clearing” link to `psp-clearing.html`. |
 | `store-settings.html` | Optional: one row “Card processors → /crm/processors.html”. Not required. |
 

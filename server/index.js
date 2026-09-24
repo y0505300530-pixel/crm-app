@@ -23,7 +23,14 @@ import {
 } from "./lib/abandon.js";
 import { corsHeadersForRequest } from "./lib/cors.js";
 import { buildLeadsDigest } from "./lib/leads-digest.js";
-import { marketingDigestKeyOk, operatorAuthorized } from "./lib/operator-auth.js";
+import { marketingDigestKeyOk, operatorAuthorized, resolveOperator } from "./lib/operator-auth.js";
+import {
+  createCryptoCheckout,
+  markCryptoPaid,
+  publicCryptoStatus,
+  shipOrder,
+  walletFlags,
+} from "./lib/crypto-checkout.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -81,6 +88,7 @@ export function createHandler(deps = {}) {
   const sendQuoteEmail = deps.sendQuoteEmail || sendQuoteNotification;
   const resolveAdapters = () => deps.adapters || liveAdapters();
   const abandonLimiter = deps.abandonLimiter || createRateLimiter();
+  const cryptoLimiter = deps.cryptoLimiter || createRateLimiter();
   const sendAbandonDigest = deps.sendAbandonDigest || sendAbandonedDigest;
 
   return async function handler(req, res) {
@@ -117,6 +125,13 @@ export function createHandler(deps = {}) {
     return false;
   }
 
+  async function operatorContext() {
+    return resolveOperator(req, {
+      checkCrmSession: deps.checkCrmSession,
+      fetchImpl: deps.fetchImpl,
+    });
+  }
+
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
       "Cache-Control": "no-store",
@@ -144,6 +159,7 @@ export function createHandler(deps = {}) {
         callbackUrl: callbackUrl(),
         paymentsEnabled: enabled,
         mode: paymentsMode(),
+        cryptoWallets: walletFlags(),
         ...secretHealth(),
       });
     }
@@ -171,13 +187,73 @@ export function createHandler(deps = {}) {
 
     if (path === "/api/store-orders" && req.method === "GET") {
       if (await denyUnlessOperator()) return;
-      return json(200, { orders: db.listOrders() });
+      let orders = db.listOrders();
+      const status = url.searchParams.get("status");
+      const method = url.searchParams.get("paymentMethod");
+      const q = (url.searchParams.get("q") || "").trim().toLowerCase();
+      if (status) orders = orders.filter((o) => o.status === status);
+      if (method) orders = orders.filter((o) => (o.paymentMethod || "") === method);
+      if (q) {
+        orders = orders.filter((o) => {
+          const c = o.customer || {};
+          const hay = [o.id, o.orderRef, c.email, c.first_name, c.last_name, o.crypto?.txHash]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+          return hay.includes(q);
+        });
+      }
+      return json(200, { orders });
+    }
+
+    const cryptoAction = path.match(/^\/api\/store-orders\/([^/]+)\/(mark-paid|ship)$/);
+    if (cryptoAction && req.method === "POST") {
+      const op = await operatorContext();
+      if (!op.ok) return json(401, { error: "unauthorized" });
+      const id = decodeURIComponent(cryptoAction[1]);
+      const action = cryptoAction[2];
+      if (action === "mark-paid") {
+        const body = await readBody(req);
+        const result = markCryptoPaid(id, body, { store: db, actor: op.actor, via: op.via });
+        if (!result.ok) {
+          return json(result.status || 400, {
+            ok: false,
+            error: result.error,
+            orderStatus: result.orderStatus,
+            fulfillment: result.fulfillment,
+            paymentConfirmed: result.paymentConfirmed,
+          });
+        }
+        return json(200, {
+          ok: true,
+          reused: Boolean(result.reused),
+          order: result.order,
+          paymentConfirmed: Boolean(result.order?.paymentConfirmed),
+          analyticsEvent: result.order?.analyticsEvent || null,
+          fulfillment: result.order?.fulfillment?.status || null,
+        });
+      }
+      const result = shipOrder(id, { store: db, actor: op.actor, via: op.via });
+      if (!result.ok) {
+        return json(result.status || 400, {
+          ok: false,
+          error: result.error,
+          orderStatus: result.orderStatus || result.order?.status,
+          fulfillment: result.fulfillment || result.order?.fulfillment?.status,
+          paymentConfirmed: result.paymentConfirmed ?? Boolean(result.order?.paymentConfirmed),
+        });
+      }
+      return json(200, {
+        ok: true,
+        order: result.order,
+        fulfillment: result.order?.fulfillment?.status || "shipped",
+      });
     }
 
     if (path.startsWith("/api/store-orders/") && req.method === "GET") {
       if (await denyUnlessOperator()) return;
       const id = decodeURIComponent(path.slice("/api/store-orders/".length));
-      const order = db.getOrder(id);
+      const order = db.getOrder(id) || db.getOrderByRef(id);
       if (!order) return json(404, { error: "not_found" });
       return json(200, { order });
     }
@@ -201,6 +277,31 @@ export function createHandler(deps = {}) {
         });
       }
       return json(result.ok ? 200 : 402, result);
+    }
+
+    if (path === "/api/checkout/crypto" && req.method === "POST") {
+      if (!cryptoLimiter.allow(clientIp(req))) {
+        return json(429, { ok: false, error: "rate_limited" });
+      }
+      const body = await readBody(req);
+      const result = createCryptoCheckout(body, { store: db });
+      if (!result.ok) {
+        return json(result.status || 400, { ok: false, error: result.error });
+      }
+      if (!result.reused) {
+        markConvertedBySession(db, body.session_id || body.sessionId, {
+          via: "crypto",
+          id: result.order?.id || null,
+        });
+      }
+      return json(200, { ...result.public, reused: Boolean(result.reused) });
+    }
+
+    if (path.startsWith("/api/checkout/crypto/") && req.method === "GET") {
+      const ref = decodeURIComponent(path.slice("/api/checkout/crypto/".length));
+      const view = publicCryptoStatus(db, ref);
+      if (!view) return json(404, { ok: false, error: "not_found" });
+      return json(200, view);
     }
 
     if (path === "/api/checkout/quote" && req.method === "POST") {

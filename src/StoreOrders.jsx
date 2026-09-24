@@ -9,6 +9,8 @@ const STATUS_COLORS = {
   refunded: { bg: "#F1F5F9", text: "#475569", border: "#94A3B8" },
   chargeback: { bg: "#FEE2E2", text: "#991B1B", border: "#F87171" },
   new: { bg: "#F1F5F9", text: "#475569", border: "#94A3B8" },
+  awaiting_crypto: { bg: "#FEF3C7", text: "#92400E", border: "#F59E0B" },
+  crypto_paid: { bg: "#D1FAE5", text: "#065F46", border: "#10B981" },
 };
 
 function Badge({ status }) {
@@ -23,6 +25,21 @@ function money(amount, currency = "USD") {
 
 function ClearingPanel({ order }) {
   if (!order) return null;
+  if (order.paymentMethod === "crypto") {
+    const ship = order.fulfillment?.status || "blocked";
+    return (
+      <div style={{ padding: "8px 8px 18px", color: "#E2E8F0", fontSize: 13 }}>
+        <div style={{ marginBottom: 8 }}>
+          Crypto order <strong style={{ fontFamily: "'Space Mono',monospace" }}>{order.orderRef}</strong>
+          {" · "}amount due {order.amountDue || order.amount} {order.payAsset || "USDT"}
+          {" · "}fulfillment {ship}
+        </div>
+        <div style={{ color: "#94A3B8" }}>
+          Mark paid and shipping live on Crypto payments. Shipping stays blocked until a staff member confirms the transfer. This row is not a card capture.
+        </div>
+      </div>
+    );
+  }
   return (
     <div style={{ padding: "8px 8px 18px" }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>

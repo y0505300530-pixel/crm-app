@@ -196,6 +196,7 @@
       { key: 'processors', icon: '🏦', label: 'Processors', m: 1, admin: 1 },
       { key: 'psp-clearing', icon: '💳', label: 'PSP Clearing', m: 1 },
       { key: 'abandoned-checkout', icon: '🧾', label: 'Abandoned checkout', m: 1 },
+      { key: 'crypto-orders', icon: '🪙', label: 'Crypto payments', m: 1 },
       { key: 'store-messages', icon: '✉️', label: 'Messages', m: 1, id: 'nav-store-messages',
         extra: '<span class="nav-badge" id="msgBadgeNav" style="display:none"></span>' },
       { key: 'site-texts',     icon: '📄', label: 'Site texts', m: 1 },
