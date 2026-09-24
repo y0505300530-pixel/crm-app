@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "server": "node server/index.js",
+    "inventory:intake": "node server/scripts/inventory-intake.js",
     "test": "node --test server/tests/*.test.js"
   },
   "dependencies": {

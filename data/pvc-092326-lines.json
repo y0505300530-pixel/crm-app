@@ -1,0 +1,10 @@
+{
+  "source_csv": "data/pvc-092326-lines.csv",
+  "status": "SEE_CSV",
+  "note": "Seed reads data/pvc-092326-lines.csv. This JSON file is not the intake source.",
+  "targets": {
+    "goods_total": "6640.50",
+    "units": 460,
+    "line_count": 28
+  }
+}

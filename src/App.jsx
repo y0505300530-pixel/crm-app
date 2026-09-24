@@ -1,8 +1,17 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ProcessorSettings from "./ProcessorSettings.jsx";
 import StoreOrders from "./StoreOrders.jsx";
 import AbandonedCheckouts from "./AbandonedCheckouts.jsx";
 import CryptoOrders from "./CryptoOrders.jsx";
+import Inventory from "./Inventory.jsx";
+
+function isInventoryLocation() {
+  if (typeof window === "undefined") return false;
+  const hash = window.location.hash || "";
+  if (hash === "#/inventory" || hash === "#inventory") return true;
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  return path === "/inventory";
+}
 
 const USERS = [
   { email: "sophia@blitz-affiliates.marketing", password: "Odessa2020", name: "Sophia" },
@@ -235,7 +244,28 @@ function GroupHeader({ icon, title, count, total, accentColor, defaultOpen, chil
 /* ── Dashboard ── */
 function Dashboard({ user, onLogout }) {
   const now = new Date();
-  const [view, setView] = useState("paytrack");
+  const [view, setView] = useState(() => (isInventoryLocation() ? "inventory" : "paytrack"));
+  useEffect(() => {
+    const sync = () => {
+      if (isInventoryLocation()) setView("inventory");
+    };
+    window.addEventListener("hashchange", sync);
+    window.addEventListener("popstate", sync);
+    return () => {
+      window.removeEventListener("hashchange", sync);
+      window.removeEventListener("popstate", sync);
+    };
+  }, []);
+  const selectView = (id) => {
+    setView(id);
+    if (id === "inventory") {
+      if (window.location.hash !== "#/inventory") window.location.hash = "#/inventory";
+      return;
+    }
+    if (window.location.hash === "#/inventory" || window.location.hash === "#inventory") {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+  };
   const [month, setMonth] = useState(now.getMonth());
   const [year, setYear] = useState(now.getFullYear());
   const [payments, setPayments] = useState(INITIAL);
@@ -299,8 +329,9 @@ function Dashboard({ user, onLogout }) {
               ["processors", "Processors"],
               ["abandoned", "Abandoned checkout"],
               ["crypto", "Crypto payments"],
+              ["inventory", "Inventory"],
             ].map(([id, label]) => (
-              <button key={id} onClick={() => setView(id)} style={{
+              <button key={id} onClick={() => selectView(id)} style={{
                 padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600,
                 border: view === id ? "1px solid rgba(56,189,248,0.35)" : "1px solid transparent",
                 background: view === id ? "rgba(56,189,248,0.12)" : "transparent",
@@ -318,6 +349,11 @@ function Dashboard({ user, onLogout }) {
         </div>
       </header>
 
+      {view === "inventory" && (
+        <main style={{ maxWidth: 1240, margin: "0 auto", padding: "28px 32px" }}>
+          <Inventory />
+        </main>
+      )}
       {view === "orders" && (
         <main style={{ maxWidth: 1240, margin: "0 auto", padding: "28px 32px" }}>
           <StoreOrders isAdmin={isAdmin} />

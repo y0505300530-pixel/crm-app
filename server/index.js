@@ -31,6 +31,9 @@ import {
   shipOrder,
   walletFlags,
 } from "./lib/crypto-checkout.js";
+import { createInventoryStore, INVENTORY_PATH } from "./lib/inventory.js";
+import { seedInventory } from "./lib/inventory-seed.js";
+import { handleInventoryHttp } from "./lib/inventory-http.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -39,6 +42,15 @@ const DRY_RUN = process.env.UMG_DRY_RUN === "1" || process.env.UMG_DRY_RUN === "
 const PUBLIC_URL = (process.env.CRM_PUBLIC_URL || "").replace(/\/$/, "");
 
 const store = createStore({ filePath: STORE_PATH });
+let defaultInventoryStore = null;
+
+function sharedInventoryStore() {
+  if (!defaultInventoryStore) {
+    defaultInventoryStore = createInventoryStore({ filePath: INVENTORY_PATH });
+    seedInventory(defaultInventoryStore);
+  }
+  return defaultInventoryStore;
+}
 
 function liveAdapters() {
   if (DRY_RUN) {
@@ -85,6 +97,10 @@ function readBodySilent(req) {
 
 export function createHandler(deps = {}) {
   const db = deps.store || store;
+  function resolveInventory() {
+    if (deps.inventory) return deps.inventory;
+    return sharedInventoryStore();
+  }
   const sendQuoteEmail = deps.sendQuoteEmail || sendQuoteNotification;
   const resolveAdapters = () => deps.adapters || liveAdapters();
   const abandonLimiter = deps.abandonLimiter || createRateLimiter();
@@ -445,6 +461,18 @@ export function createHandler(deps = {}) {
       return json(200, handleProcessorWebhook(db, "centrobill", body));
     }
 
+    if (path === "/api/inventory" || path.startsWith("/api/inventory/")) {
+      await handleInventoryHttp({
+        path,
+        method: req.method,
+        json,
+        inventory: resolveInventory(),
+        readBody: () => readBody(req),
+        authorize: () => operatorContext(),
+      });
+      return;
+    }
+
     if (path === "/" || path === "/api") {
       return json(200, { service: "biolabs-crm-psp", health: "/api/health" });
     }
@@ -468,6 +496,7 @@ export function startCrmServer(port = PORT, deps = {}) {
 
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
 if (isMain) {
+  sharedInventoryStore();
   startPoller(store, { intervalMs: Number(process.env.UMG_POLL_MS || 30000), adapters: liveAdapters() });
   if (isAbandonDigestEnabled()) {
     const digestMs = Number(process.env.ABANDON_DIGEST_MS || 6 * 60 * 60 * 1000);
