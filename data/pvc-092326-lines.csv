@@ -1,0 +1,29 @@
+supplier_name,qty,unit_cost,line_total,suggested_internal_code_note
+NAD+ 500mg,10,11.95,119.50,
+NAD+ 1000mg,10,19.00,190.00,
+AOD-9604 5mg,10,14.30,143.00,
+AOD-9604 10mg,10,24.20,242.00,
+BPC-157 10mg,10,9.90,99.00,
+BPC-157 20mg,10,19.25,192.50,
+GLOW 70 70mg,10,25.30,253.00,suggested GLOW
+Epithalon 10mg,10,8.25,82.50,
+Epithalon 50mg,10,24.20,242.00,
+GHK-Cu 100mg,10,9.90,99.00,
+MOTS-c 10mg,10,12.10,121.00,
+MOTS-c 20mg,10,20.90,209.00,
+KPV 10mg,10,9.90,99.00,
+Semax 10mg,10,8.80,88.00,
+Kisspeptin-10 10mg,10,13.20,132.00,
+BPC-157/TB-500 20mg,20,20.00,400.00,
+TB-500 10mg,10,14.00,140.00,
+R3TA 10mg,30,13.00,390.00,alias R3TA→G3-R; suggested G3-R-10
+R3TA 20mg,30,17.00,510.00,alias R3TA→G3-R; suggested G3-R-20
+R3TA 30mg,30,26.00,780.00,alias R3TA→G3-R; suggested G3-R-30
+R3TA 60mg,10,35.00,350.00,alias R3TA→G3-R; suggested G3-R-60
+Ipamorelin 10mg,10,8.80,88.00,
+Tesamorelin 10mg,10,23.10,231.00,suggested TES-10
+Tirzepatide 20mg,30,17.00,510.00,alias Tirzepatide→G2-T; suggested G2-T-20
+Semaglutide 10mg,10,10.00,100.00,alias Semaglutide→G1-S; suggested G1-S-10
+Semaglutide 20mg,10,17.00,170.00,alias Semaglutide→G1-S; suggested G1-S-20
+Semax/Selank Blend 10mg,10,16.00,160.00,
+BAC Water 10mg,100,5.00,500.00,suggested BAC-WATER

@@ -134,7 +134,7 @@ export default function Inventory() {
         <div>
           <h2 style={{ margin: "0 0 6px", fontSize: 22 }}>Inventory</h2>
           <p style={{ margin: 0, color: "#94A3B8", fontSize: 14, maxWidth: 760 }}>
-            On-hand is the sum of inventory movements. PO #071326 is already received. PO #PVC-092326 stays in transit until you press Mark Received, and only after each line has an approved internal SKU.
+            On-hand is the sum of inventory movements. PO #071326 is already received. PO #PVC-092326 is booked as invoice lines only. Mark Received does not post stock while those lines are still unmapped.
           </p>
         </div>
         <button
@@ -276,7 +276,7 @@ export default function Inventory() {
                           <td colSpan={9} style={{ padding: "0 16px 16px" }}>
                             {po.invoice_goods_target && (
                               <div style={{ color: "#94A3B8", fontSize: 13, margin: "8px 0" }}>
-                                Invoice target (not booked until lines are loaded): {money(po.invoice_goods_target)} goods, {po.invoice_units_target} units, {po.invoice_line_target} lines. Booked lines: {po.lines.length}.
+                                Booked {po.lines.length} lines, {po.lines.reduce((sum, line) => sum + (Number(line.qty) || 0), 0)} units, {money(po.goods_total)}. Invoice target {po.invoice_line_target} lines, {po.invoice_units_target} units, {money(po.invoice_goods_target)}. Marketing notes are not SKUs.
                               </div>
                             )}
                             {po.alias_map && (
@@ -294,7 +294,7 @@ export default function Inventory() {
                               <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 8 }}>
                                 <thead>
                                   <tr>
-                                    {["Line", "SKU", "Supplier invoice name", "Qty", "Unit cost", "Line total"].map((label) => (
+                                    {["Line", "SKU", "Supplier invoice name", "Marketing note", "Qty", "Unit cost", "Line total"].map((label) => (
                                       <th key={label} style={th}>{label}</th>
                                     ))}
                                   </tr>
@@ -305,6 +305,7 @@ export default function Inventory() {
                                       <td style={td}>{line.line_no || "—"}</td>
                                       <td style={td}>{line.sku_code || "Unmapped"}</td>
                                       <td style={td}>{line.supplier_name || "—"}</td>
+                                      <td style={td}>{line.suggested_internal_code_note || "—"}</td>
                                       <td style={td}>{line.qty}</td>
                                       <td style={td}>{money(line.unit_cost)}</td>
                                       <td style={td}>{money(line.line_total)}</td>

@@ -317,6 +317,7 @@ export function buildInventoryView(store) {
           sku_id: line.sku_id,
           sku_code: line.sku_id ? skuCode(skus, line.sku_id) : null,
           supplier_name: line.supplier_name || null,
+          suggested_internal_code_note: line.suggested_internal_code_note || "",
           qty: line.qty,
           unit_cost: centsToDollars(line.unit_cost_cents),
           line_total: centsToDollars(line.line_total_cents),

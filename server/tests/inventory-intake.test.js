@@ -9,7 +9,7 @@ import {
   createInventoryStore,
   markPurchaseOrderReceived,
 } from "../lib/inventory.js";
-import { applyPvcPurchaseOrder, seedInventory } from "../lib/inventory-seed.js";
+import { applyPvcPurchaseOrder, loadPvcLinesFile, seedInventory, summarizePvcLines } from "../lib/inventory-seed.js";
 import { startCrmServer } from "../index.js";
 
 const PUBLIC_NAME_BANNED = /retatrutide|\breta\b|tirzepatide|semaglutide/i;
@@ -95,13 +95,14 @@ test("PO #071326 intake is idempotent and on_hand totals 400", () => {
   assert.equal(cosmo.can_mark_received, false);
 });
 
-test("PO #PVC-092326 books no movements and does not create SKUs from alias names", () => {
+test("PO #PVC-092326 books the 28 invoice lines and no movements", () => {
   const { store } = seedStore();
-  const file = JSON.parse(readFileSync(new URL("../../data/pvc-092326-lines.json", import.meta.url), "utf8"));
-  assert.deepEqual(file.lines, []);
-  assert.equal(file.targets.goods_total, "6640.50");
-  assert.equal(file.targets.units, 460);
-  assert.equal(file.targets.line_count, 28);
+  const loaded = loadPvcLinesFile();
+  const summary = summarizePvcLines(loaded.lines);
+  assert.equal(summary.ok, true);
+  assert.equal(summary.count, 28);
+  assert.equal(summary.units, 460);
+  assert.equal(summary.goods_cents, 664050);
 
   const codes = store.listSkus().map((sku) => sku.code).sort();
   assert.deepEqual(codes, ["G3-R-10", "G3-R-20", "GLOW", "TES-10", "WOL-10"]);
@@ -116,22 +117,36 @@ test("PO #PVC-092326 books no movements and does not create SKUs from alias name
     Tirzepatide: "G2-T",
     Semaglutide: "G1-S",
   });
-  assert.equal(store.listLines().filter((line) => line.po_id === "PVC-092326").length, 0);
+
+  const lines = store.listLines().filter((line) => line.po_id === "PVC-092326");
+  assert.equal(lines.length, 28);
+  assert.equal(lines.reduce((sum, line) => sum + line.qty, 0), 460);
+  assert.equal(lines.reduce((sum, line) => sum + line.line_total_cents, 0), 664050);
+  for (const line of lines) assert.equal(line.sku_id, null);
   assert.equal(store.listMovements().filter((row) => row.po_id === "PVC-092326").length, 0);
 
-  applyPvcPurchaseOrder(store, [{
-    line_no: 1,
-    supplier_name: "Tirzepatide 10mg",
-    qty: 10,
-    unit_cost: "20.00",
-    line_total: "200.00",
-    sku_id: "sku:SHOULD-NOT-STICK",
-  }]);
-  assert.equal(store.listSkus().length, 5);
-  const line = store.listLines().find((row) => row.po_id === "PVC-092326");
-  assert.equal(line.supplier_name, "Tirzepatide 10mg");
-  assert.equal(line.sku_id, null);
-  assert.equal(store.listMovements().filter((row) => row.po_id === "PVC-092326").length, 0);
+  const r3ta = lines.find((line) => line.supplier_name === "R3TA 10mg");
+  assert.equal(r3ta.qty, 30);
+  assert.equal(r3ta.line_total_cents, 39000);
+  assert.match(r3ta.suggested_internal_code_note, /suggested G3-R-10/);
+  const glowLine = lines.find((line) => line.supplier_name === "GLOW 70 70mg");
+  assert.match(glowLine.suggested_internal_code_note, /suggested GLOW/);
+  assert.equal(lines.find((line) => line.supplier_name === "BAC Water 10mg").qty, 100);
+  assert.equal(store.listSkus().some((sku) => ["G3-R-30", "G3-R-60", "G2-T-20", "G1-S-10", "G1-S-20", "BAC-WATER", "G2-T", "G1-S"].includes(sku.code)), false);
+
+  const view = buildInventoryView(store);
+  assert.equal(view.on_hand_units, 400);
+  assert.equal(view.skus.find((sku) => sku.code === "GLOW").on_hand, 50);
+  assert.deepEqual(view.skus.find((sku) => sku.code === "GLOW").linked_pos, ["071326"]);
+  assert.equal(view.purchase_orders.find((row) => row.po_id === "PVC-092326").goods_total, "6640.50");
+  assert.equal(view.purchase_orders.find((row) => row.po_id === "PVC-092326").movement_count, 0);
+
+  const again = seedInventory(store);
+  assert.equal(again.pvc.lines_booked, 28);
+  assert.equal(again.pvc.movements, 0);
+  assert.equal(again.mark_received_invoked, false);
+  assert.equal(store.listLines().filter((line) => line.po_id === "PVC-092326").length, 28);
+  assert.equal(store.listMovements().length, 5);
 
   const blocked = markPurchaseOrderReceived(store, "PVC-092326", "y0505300530@gmail.com", "2026-09-24T12:00:00.000Z");
   assert.equal(blocked.ok, false);
@@ -140,14 +155,19 @@ test("PO #PVC-092326 books no movements and does not create SKUs from alias name
   assert.equal(store.listPurchaseOrders().find((row) => row.po_id === "PVC-092326").status, "PAID_IN_TRANSIT");
   assert.equal(store.listMovements().length, 5);
 
-  applyPvcPurchaseOrder(store, [{
+  const isolated = createInventoryStore({ memoryOnly: true });
+  applyPvcPurchaseOrder(isolated, [{
     line_no: 1,
-    supplier_name: "Tirzepatide 10mg",
-    qty: 10,
-    unit_cost: "20.00",
-    line_total: "200.00",
+    supplier_name: "Tirzepatide 20mg",
+    qty: 30,
+    unit_cost: "17.00",
+    line_total: "510.00",
+    sku_id: "sku:SHOULD-NOT-STICK",
+    suggested_internal_code_note: "alias Tirzepatide→G2-T; suggested G2-T-20",
   }]);
-  assert.equal(store.listLines().filter((row) => row.po_id === "PVC-092326").length, 1);
+  assert.equal(isolated.listSkus().length, 0);
+  assert.equal(isolated.listLines()[0].sku_id, null);
+  assert.equal(isolated.listMovements().length, 0);
 });
 
 test("Mark Received posts movements only when invoked, then refuses a duplicate", () => {
@@ -242,6 +262,7 @@ test("inventory HTTP is operator-only, idempotent, and does not expose catalog q
     assert.equal(firstBody.report.movements_created, 5);
     assert.equal(firstBody.report.on_hand_units, 400);
     assert.equal(firstBody.report.pvc.movements, 0);
+    assert.equal(firstBody.report.pvc.lines_booked, 28);
     assert.equal(firstBody.report.pvc.status, "PAID_IN_TRANSIT");
     assert.equal(firstBody.report.mark_received_invoked, false);
 
@@ -258,9 +279,14 @@ test("inventory HTTP is operator-only, idempotent, and does not expose catalog q
     const receivedBody = await received.json();
     assert.equal(received.status, 409);
     assert.equal(receivedBody.movements_created, 0);
-    assert.equal(receivedBody.error, "no_lines");
+    assert.equal(receivedBody.error, "sku_mapping_required");
     assert.equal(receivedBody.inventory.on_hand_units, 400);
-    assert.equal(receivedBody.inventory.purchase_orders.find((row) => row.po_id === "PVC-092326").status, "PAID_IN_TRANSIT");
+    const pvcPo = receivedBody.inventory.purchase_orders.find((row) => row.po_id === "PVC-092326");
+    assert.equal(pvcPo.status, "PAID_IN_TRANSIT");
+    assert.equal(pvcPo.lines.length, 28);
+    assert.equal(pvcPo.goods_total, "6640.50");
+    assert.equal(pvcPo.movement_count, 0);
+    assert.equal(pvcPo.lines.every((line) => line.sku_id == null), true);
 
     const stock = await fetch(`${base}/api/inventory/skus/sku:G3-R-10/stock`, {
       method: "POST",

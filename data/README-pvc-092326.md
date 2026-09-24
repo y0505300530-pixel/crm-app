@@ -2,16 +2,10 @@
 
 Pure Vision Consulting, dated 23 Sep 2026. Status on the PO header is `PAID_IN_TRANSIT`, ship-to `PENDING`.
 
-`pvc-092326-lines.json` is the intake source for this PO. The 28 invoice lines are **not in this repo** (no CSV under `uploads/`). The file is a placeholder: `lines` is empty on purpose.
+`data/pvc-092326-lines.csv` is the intake source. Columns: `supplier_name`, `qty`, `unit_cost`, `line_total`, `suggested_internal_code_note`.
 
-Do not invent product rows or internal SKUs from supplier invoice names. When the CSV is available, add each line as:
+The file has 28 lines, 460 units, and $6,640.50. Seed books those rows as purchase-order lines only. It does not post inventory movements, and it does not create internal SKUs from `suggested_internal_code_note`. Those notes are marketing proposals until Yehuda approves a mapping. `sku_id` stays null.
 
-```json
-{ "line_no": 1, "supplier_name": "name on the invoice", "qty": 1, "unit_cost": "0.00", "line_total": "0.00" }
-```
+Alias notes live on the PO record only: `R3TA` → `G3-R`, `Tirzepatide` → `G2-T`, `Semaglutide` → `G1-S`.
 
-Leave `sku_id` unset. Mapping is approved only when Yehuda says so (`mapping_approved: true` plus an existing `sku_code`). Alias notes already live on the PO record (`R3TA` → `G3-R`, `Tirzepatide` → `G2-T`, `Semaglutide` → `G1-S`) and are not SKUs.
-
-Invoice targets, not booked until lines are loaded: goods `$6,640.50`, `460` units, `28` lines.
-
-Re-run `node server/scripts/inventory-intake.js`. That posts no movements. Movements are created only by the admin **Mark Received** action after mapping.
+Re-run `node server/scripts/inventory-intake.js`. That is idempotent and still posts no PVC movements. Movements are created only by the admin **Mark Received** action after each line has an approved `sku_id`. Do not run that action from seed.

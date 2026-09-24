@@ -1,11 +1,10 @@
 {
-  "source": "Pure Vision Consulting invoice PVC-092326 dated 23 Sep 2026",
-  "status": "LINES_TBD",
-  "instructions": "Do not invent supplier SKU rows. When the 28-line invoice CSV is available, replace lines with { line_no, supplier_name, qty, unit_cost, line_total }. Leave sku_id unset until Yehuda approves mapping. Re-run node server/scripts/inventory-intake.js. Intake books lines only and does not post movements.",
+  "source_csv": "data/pvc-092326-lines.csv",
+  "status": "SEE_CSV",
+  "note": "Seed reads data/pvc-092326-lines.csv. This JSON file is not the intake source.",
   "targets": {
     "goods_total": "6640.50",
     "units": 460,
     "line_count": 28
-  },
-  "lines": []
+  }
 }

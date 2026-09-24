@@ -8,7 +8,8 @@ import {
 } from "./inventory.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-export const PVC_LINES_PATH = join(__dirname, "..", "..", "data", "pvc-092326-lines.json");
+/** Invoice source of truth. Seed reads this CSV; it does not invent lines. */
+export const PVC_LINES_PATH = join(__dirname, "..", "..", "data", "pvc-092326-lines.csv");
 
 const SEED_ACTOR = "inventory-seed";
 
@@ -54,17 +55,93 @@ function skuId(code) {
   return `sku:${code}`;
 }
 
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let inQuotes = false;
+  const source = String(text || "").replace(/^\uFEFF/, "");
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source[i];
+    if (inQuotes) {
+      if (ch === "\"") {
+        if (source[i + 1] === "\"") {
+          cell += "\"";
+          i += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cell += ch;
+      }
+    } else if (ch === "\"") {
+      inQuotes = true;
+    } else if (ch === ",") {
+      row.push(cell);
+      cell = "";
+    } else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && source[i + 1] === "\n") i += 1;
+      row.push(cell);
+      cell = "";
+      if (row.some((value) => value.trim() !== "")) rows.push(row);
+      row = [];
+    } else {
+      cell += ch;
+    }
+  }
+  if (cell.length > 0 || row.length > 0) {
+    row.push(cell);
+    if (row.some((value) => value.trim() !== "")) rows.push(row);
+  }
+  return rows;
+}
+
+function linesFromCsv(text) {
+  const table = parseCsv(text);
+  if (table.length === 0) return { ok: false, error: "empty_csv", lines: [] };
+  const header = table[0].map((value) => value.trim());
+  const idx = (name) => header.indexOf(name);
+  const nameCol = idx("supplier_name");
+  const qtyCol = idx("qty");
+  const costCol = idx("unit_cost");
+  const totalCol = idx("line_total");
+  const noteCol = idx("suggested_internal_code_note");
+  if (nameCol < 0 || qtyCol < 0 || costCol < 0 || totalCol < 0) {
+    return { ok: false, error: "csv_header", lines: [] };
+  }
+  const lines = table.slice(1).map((cells, index) => ({
+    line_no: index + 1,
+    supplier_name: (cells[nameCol] || "").trim(),
+    qty: (cells[qtyCol] || "").trim(),
+    unit_cost: (cells[costCol] || "").trim(),
+    line_total: (cells[totalCol] || "").trim(),
+    suggested_internal_code_note: noteCol < 0 ? "" : (cells[noteCol] || "").trim(),
+  }));
+  return { ok: true, lines };
+}
+
 export function loadPvcLinesFile(filePath = PVC_LINES_PATH) {
   if (!filePath || !existsSync(filePath)) {
     return { ok: true, missing: true, lines: [], targets: null };
   }
   try {
-    const parsed = JSON.parse(readFileSync(filePath, "utf8"));
+    const text = readFileSync(filePath, "utf8");
+    if (String(filePath).endsWith(".csv")) {
+      const parsed = linesFromCsv(text);
+      if (!parsed.ok) return { ok: false, error: parsed.error, lines: [] };
+      return {
+        ok: true,
+        missing: false,
+        lines: parsed.lines,
+        targets: { goods_total: "6640.50", units: 460, line_count: 28 },
+      };
+    }
+    const parsed = JSON.parse(text);
     const lines = Array.isArray(parsed?.lines) ? parsed.lines : null;
     if (!lines) return { ok: false, error: "lines_not_array", lines: [] };
     return { ok: true, missing: false, lines, targets: parsed.targets || null };
   } catch {
-    return { ok: false, error: "invalid_json", lines: [] };
+    return { ok: false, error: "invalid_file", lines: [] };
   }
 }
 
@@ -91,9 +168,29 @@ export function normalizePvcLine(raw, index) {
       unit_cost_cents: unitCost,
       line_total_cents: lineTotal,
       mapping_approved: raw.mapping_approved === true,
-      sku_code: raw.sku_code ? String(raw.sku_code).trim() : "",
+      sku_code: raw.mapping_approved === true && raw.sku_code ? String(raw.sku_code).trim() : "",
+      suggested_internal_code_note: String(raw.suggested_internal_code_note || "").trim(),
     },
   };
+}
+
+/**
+ * Marketing suggestions are not an approved map. They never become sku_id or a new SKU.
+ */
+export function summarizePvcLines(rawLines) {
+  let units = 0;
+  let goods = 0;
+  for (let index = 0; index < rawLines.length; index += 1) {
+    const normalized = normalizePvcLine(rawLines[index], index);
+    if (!normalized.ok) return { ok: false, error: normalized.error, index };
+    const line = normalized.line;
+    if (line.unit_cost_cents * line.qty !== line.line_total_cents) {
+      return { ok: false, error: "line_total_mismatch", supplier_name: line.supplier_name };
+    }
+    units += line.qty;
+    goods += line.line_total_cents;
+  }
+  return { ok: true, count: rawLines.length, units, goods_cents: goods };
 }
 
 function resolveApprovedSkuId(store, line) {
@@ -121,7 +218,7 @@ export function applyPvcPurchaseOrder(store, rawLines) {
     invoice_goods_target_cents: PVC_PO.invoice_goods_target_cents,
     invoice_units_target: PVC_PO.invoice_units_target,
     invoice_line_target: PVC_PO.invoice_line_target,
-    notes: "Supplier invoice names are stored on PO lines only. sku_id stays null until Yehuda approves mapping. alias_map is metadata on this PO and does not create internal SKUs.",
+    notes: "Supplier invoice names and suggested_internal_code_note stay on PO lines only. Those notes are marketing proposals, not approved SKUs. sku_id stays null until Yehuda approves mapping. alias_map is metadata on this PO and does not create internal SKUs.",
     created_by: existing?.created_by || SEED_ACTOR,
     created_at: existing?.created_at || PVC_PO.created_at,
   });
@@ -145,6 +242,7 @@ export function applyPvcPurchaseOrder(store, rawLines) {
       qty: line.qty,
       unit_cost_cents: line.unit_cost_cents,
       line_total_cents: line.line_total_cents,
+      suggested_internal_code_note: line.suggested_internal_code_note || "",
     });
     booked += 1;
   });
@@ -225,6 +323,12 @@ export function seedInventory(store, opts = {}) {
   }
 
   const pvcFile = loadPvcLinesFile(opts.pvcLinesPath || PVC_LINES_PATH);
+  if (!opts.pvcLinesPath) {
+    const summary = summarizePvcLines(pvcFile.lines || []);
+    if (!pvcFile.ok || !summary.ok || summary.count !== 28 || summary.units !== 460 || summary.goods_cents !== PVC_PO.invoice_goods_target_cents) {
+      throw new Error(`pvc_invoice_mismatch:${summary.error || pvcFile.error || "totals"}`);
+    }
+  }
   const pvc = applyPvcPurchaseOrder(store, pvcFile.lines || []);
   const pvcMovements = store.listMovements().filter((row) => row.po_id === PVC_PO.po_id).length;
   const view = buildInventoryView(store);
