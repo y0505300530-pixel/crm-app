@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { formatAmount } from "./card.js";
+import { orderAttribution } from "./order-attribution.js"; // infra 2026-09-30 order-attribution
 import { stripSecrets } from "./sanitize.js";
 import { findForbiddenCardField } from "./abandon.js";
 import {
@@ -346,6 +347,9 @@ export function createCryptoCheckout(input, deps) {
             mismatch: pricing.mismatch,
             discountInfo: pricing.discountInfo,
             volumeDiscount: pricing.volumeDiscount || null,
+            // infra 2026-09-29 honest-charge: coupon-quote coupon/discount, so the crypto order email reconciles too
+            coupon: pricing.coupon || "",
+            discount: pricing.discount || null,
             lines: pricing.lines,
           },
           priceMismatch: pricing.mismatch,
@@ -357,6 +361,7 @@ export function createCryptoCheckout(input, deps) {
     items: parsed.value.items,
     notes: parsed.value.notes,
     session_id: parsed.value.session_id,
+    ...orderAttribution(input), // infra 2026-09-30 order-attribution: only when the page sends it in the create request
     ...(parsed.value.test ? { test: true } : {}),
     depositWallets: wallets,
     crypto: {
