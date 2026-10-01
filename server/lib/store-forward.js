@@ -14,6 +14,7 @@
  *  - No card data leaves here (the order never holds any; stripSecrets already ran at charge time).
  */
 
+import { orderAttribution } from "./order-attribution.js"; // infra 2026-09-30 order-attribution
 export const DEFAULT_FORWARD_URL = "http://127.0.0.1:4000/msolpeptides-api/notify-order";
 export const CARD_PAYMENT_METHOD = "card-umg";
 export const CARD_STATEMENT_DESCRIPTOR = "PEPTIDESS SHOP";
@@ -48,6 +49,18 @@ export function isDryRunOrder(order) {
 
 export function isForwardable(order) {
   return Boolean(order) && String(order.status || "").toLowerCase() === "approved";
+}
+
+// infra 2026-09-29 honest-charge: one note line for whatever discount the charged amount includes (coupon or ladder).
+function discountNote(pc) {
+  const d = pc && pc.discount;
+  if (d && Number(d.amount) > 0) {
+    const code = String(d.source || "").startsWith("coupon:") ? String(d.source).slice(7) : "";
+    return code
+      ? `coupon ${code} ${d.pct}% (−$${d.amount}) included in total`
+      : `volume discount ${d.pct}% (−$${d.amount}) included in total`;
+  }
+  return pc && pc.volumeDiscount ? `volume discount ${pc.volumeDiscount.pct}% (−$${pc.volumeDiscount.discount}) included in total` : "";
 }
 
 export function buildNotifyPayload(order, opts = {}) {
@@ -92,7 +105,7 @@ export function buildNotifyPayload(order, opts = {}) {
     `${tag}Card payment APPROVED via ${order.winningProcessor || "umg"}`,
     order.winningTxnId ? `processor txn ${order.winningTxnId}` : "",
     descriptor ? `card statement shows: ${descriptor}` : "card statement descriptor: not confirmed yet",
-    order.priceCheck?.volumeDiscount ? `volume discount ${order.priceCheck.volumeDiscount.pct}% (−$${order.priceCheck.volumeDiscount.discount}) included in total` : "",
+    discountNote(order.priceCheck),
     order.notes ? `customer notes: ${String(order.notes).slice(0, 800)}` : "",
   ].filter(Boolean);
   const lines = items.map((i) => `${i.qty}x ${i.name}${i.mg ? ` ${i.mg}` : ""} @ $${money(i.price)}`);
@@ -126,12 +139,15 @@ export function buildNotifyPayload(order, opts = {}) {
         cost: money(shippingCost),
       },
       items,
+      // infra 2026-09-29 honest-charge: products-api applies the coupon itself (total_due_server), so CRM matches the charge
+      coupon: pc && pc.coupon ? String(pc.coupon).slice(0, 40) : "",
       subtotal: money(subtotal),
       shippingCost: money(shippingCost),
       total: money(total),
       paymentMethod: payMethod,
       notes: noteParts.join(" · "),
       timestamp: order.createdAt || nowIso(),
+      ...orderAttribution(order), // infra 2026-09-30 order-attribution: the stored trail goes to the CRM order
       tc_accepted: true,
     },
   };
