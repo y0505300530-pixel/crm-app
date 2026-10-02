@@ -1,6 +1,9 @@
 import { randomBytes } from "node:crypto";
+import { humanUseBlocks } from "./human-use.js"; // 2026-09-30 COMPLIANCE_HOLD
 import { formatAmount } from "./card.js";
-import { stripSecrets } from "./sanitize.js";
+import { orderAttribution } from "./order-attribution.js"; // infra 2026-09-30 order-attribution
+import { cleanText, maskCardNumbers, stripSecrets } from "./sanitize.js";
+import { itemsKey } from "./store.js";
 import { findForbiddenCardField } from "./abandon.js";
 import {
   PAY, allocatePayAmount, confirmSecret, cryptoVerifyConfig, isCryptoVerified, isTokenAccepted, normalizeHint, paymentDeadline, signConfirmToken,
@@ -33,18 +36,21 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+// audit 2026-10-02 (#758): every field is read as text (an object / array becomes "", which the existing 400s then refuse when it is the
+// name or the e-mail), control characters out, length capped. The e-mail keeps one character of slack so validateCryptoCheckout can refuse
+// an over-long address instead of storing a cut one.
 function readCustomer(raw) {
   const c = raw && typeof raw === "object" ? raw : {};
   return stripSecrets({
-    first_name: c.first_name || c.firstName || "",
-    last_name: c.last_name || c.lastName || "",
-    email: String(c.email || "").trim(),
-    phone: c.phone || "",
-    address: c.address || "",
-    city: c.city || "",
-    state: c.state || "",
-    zip: c.zip || c.postal_code || c.postalCode || "",
-    country: c.country || "",
+    first_name: cleanText(c.first_name || c.firstName, 80),
+    last_name: cleanText(c.last_name || c.lastName, 80),
+    email: cleanText(c.email, 255),
+    phone: cleanText(c.phone, 40),
+    address: cleanText(c.address, 200),
+    city: cleanText(c.city, 80),
+    state: cleanText(c.state, 40),
+    zip: cleanText(c.zip || c.postal_code || c.postalCode, 20),
+    country: cleanText(c.country, 60),
   });
 }
 
@@ -148,7 +154,7 @@ export function validateCryptoCheckout(input) {
 
   const customer = readCustomer(input.customer);
   if (!customer.email) return { ok: false, error: "email_required", status: 400 };
-  if (!EMAIL_RE.test(customer.email)) return { ok: false, error: "invalid_email", status: 400 };
+  if (customer.email.length > 254 || !EMAIL_RE.test(customer.email)) return { ok: false, error: "invalid_email", status: 400 };
   if (!customer.first_name && !customer.last_name) {
     return { ok: false, error: "name_required", status: 400 };
   }
@@ -170,10 +176,10 @@ export function validateCryptoCheckout(input) {
       token,
       customer,
       items,
-      notes: String(input.notes || "").slice(0, 2000),
+      notes: maskCardNumbers(String(input.notes || "").slice(0, 2000)), // audit 2026-10-02 (#388): a pasted card number is not stored
       session_id: String(input.session_id || input.sessionId || "").trim(),
       test: input.test === true,
-      gaClientId: /^\d{1,12}\.\d{1,12}$/.test(String(input.gaClientId || "")) ? String(input.gaClientId) : null,
+      gaClientId: /^\d{1,12}\.\d{1,12}$/.test(String(input.gaClientId || input.client_id || "")) ? String(input.gaClientId || input.client_id) : null,
     },
   };
 }
@@ -185,6 +191,7 @@ export function isCryptoPaid(order) {
 
 export function isShippable(order) {
   if (!order || order.fulfillment?.status === "shipped") return false;
+  if (humanUseBlocks(order)) return false; // 2026-09-30 COMPLIANCE_HOLD
   if (order.paymentMethod === "crypto" || order.status === AWAITING_CRYPTO || order.status === CRYPTO_PAID || order.status === CRYPTO_REVIEW || order.status === CRYPTO_CANCELLED) {
     return isCryptoPaid(order) && order.fulfillment?.status !== "shipped";
   }
@@ -288,12 +295,24 @@ export function createCryptoCheckout(input, deps) {
     if (existing.paymentMethod !== "crypto") {
       return { ok: false, error: "idempotency_conflict", status: 409 };
     }
+    // audit 2026-10-02: a replay under the same key with a corrected address / name / phone / note updates ONLY those fields, and only
+    // while the order still waits for the payment, with the same cart and the same e-mail. Amount, unique cents, wallet, ref, token and
+    // network never change. Another cart or e-mail under the same key is left as it was (the page uses a new key for those).
+    let current = existing;
+    if (existing.status === AWAITING_CRYPTO && existing.paymentConfirmed !== true
+      && itemsKey(existing.items) === itemsKey(parsed.value.items)
+      && String(existing.customer?.email || "").trim().toLowerCase() === parsed.value.customer.email.toLowerCase()
+      && (JSON.stringify(existing.customer) !== JSON.stringify(parsed.value.customer) || (existing.notes || "") !== parsed.value.notes)) {
+      current = { ...existing, customer: parsed.value.customer, notes: parsed.value.notes, updatedAt: new Date().toISOString() };
+      store.upsertOrder(current);
+      current = store.getOrder(existing.id);
+    }
     return {
       ok: true,
       reused: true,
       status: 200,
-      order: existing,
-      public: toPublicCryptoView(existing, env, { confirmToken: signConfirmToken(existing, deps.confirmSecret || confirmSecret(env)) }),
+      order: current,
+      public: toPublicCryptoView(current, env, { confirmToken: signConfirmToken(current, deps.confirmSecret || confirmSecret(env)) }),
     };
   }
 
@@ -313,7 +332,7 @@ export function createCryptoCheckout(input, deps) {
   }
   const nowMs = deps.now ? deps.now().getTime() : Date.now();
   // Unique exact amount among open orders on this network, so a deposit can be matched to exactly one order.
-  const alloc = allocatePayAmount(store.listOrders(), { baseAmount: amount, network: parsed.value.network, cfg, nowMs, rand: deps.rand });
+  const alloc = allocatePayAmount(store.listOrders(), { baseAmount: amount, network: cfg.uniqueAcrossNetworks ? null : parsed.value.network, cfg, nowMs, rand: deps.rand });
   if (!alloc) return { ok: false, error: "pay_amount_unavailable", status: 503 };
 
   const createdAt = new Date(nowMs).toISOString();
@@ -346,6 +365,9 @@ export function createCryptoCheckout(input, deps) {
             mismatch: pricing.mismatch,
             discountInfo: pricing.discountInfo,
             volumeDiscount: pricing.volumeDiscount || null,
+            // infra 2026-09-29 honest-charge: coupon-quote coupon/discount, so the crypto order email reconciles too
+            coupon: pricing.coupon || "",
+            discount: pricing.discount || null,
             lines: pricing.lines,
           },
           priceMismatch: pricing.mismatch,
@@ -357,6 +379,7 @@ export function createCryptoCheckout(input, deps) {
     items: parsed.value.items,
     notes: parsed.value.notes,
     session_id: parsed.value.session_id,
+    ...orderAttribution(input), // infra 2026-09-30 order-attribution: only when the page sends it in the create request
     ...(parsed.value.test ? { test: true } : {}),
     depositWallets: wallets,
     crypto: {

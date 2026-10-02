@@ -1,7 +1,9 @@
 import { formatAmount } from "./card.js";
-import { stripSecrets } from "./sanitize.js";
+import { orderAttribution } from "./order-attribution.js"; // infra 2026-09-30 order-attribution
+import { capStr, maskCardNumbers, stripSecrets } from "./sanitize.js";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_QUOTE_ITEMS = 50; // audit 2026-10-02: ceiling on the open quote endpoint
 
 function nowIso() {
   return new Date().toISOString();
@@ -20,15 +22,15 @@ function hasCardPayload(input) {
 function readCustomer(raw) {
   const c = raw && typeof raw === "object" ? raw : {};
   return stripSecrets({
-    first_name: c.first_name || c.firstName || "",
-    last_name: c.last_name || c.lastName || "",
+    first_name: capStr(c.first_name || c.firstName || "", 200),
+    last_name: capStr(c.last_name || c.lastName || "", 200),
     email: String(c.email || "").trim(),
-    phone: c.phone || "",
-    address: c.address || "",
-    city: c.city || "",
-    state: c.state || "",
-    zip: c.zip || c.postal_code || c.postalCode || "",
-    country: c.country || "",
+    phone: capStr(c.phone || "", 40),
+    address: capStr(c.address || "", 300),
+    city: capStr(c.city || "", 200),
+    state: capStr(c.state || "", 200),
+    zip: capStr(c.zip || c.postal_code || c.postalCode || "", 200),
+    country: capStr(c.country || "", 200),
   });
 }
 
@@ -38,8 +40,8 @@ function readItems(raw) {
     const row = it && typeof it === "object" ? it : {};
     const qty = Number(row.qty ?? row.quantity);
     return {
-      sku: String(row.sku || "").trim(),
-      name: String(row.name || "").trim(),
+      sku: String(row.sku || "").trim().slice(0, 200),
+      name: maskCardNumbers(String(row.name || "").trim().slice(0, 200)), // audit 2026-10-02 (LF1 #388): a pasted card number is not stored
       qty: Number.isFinite(qty) && qty > 0 ? qty : 0,
       amount: formatAmount(row.amount),
     };
@@ -68,13 +70,16 @@ export function validateQuoteRequest(input) {
   if (!customer.email) {
     return { ok: false, error: "email_required", status: 400 };
   }
-  if (!EMAIL_RE.test(customer.email)) {
+  if (customer.email.length > 254 || !EMAIL_RE.test(customer.email)) {
     return { ok: false, error: "invalid_email", status: 400 };
   }
   if (!customer.first_name && !customer.last_name) {
     return { ok: false, error: "name_required", status: 400 };
   }
 
+  if (Array.isArray(input.items) && input.items.length > MAX_QUOTE_ITEMS) {
+    return { ok: false, error: "too_many_items", status: 400 };
+  }
   const items = readItems(input.items);
   if (!items.length) {
     return { ok: false, error: "items_required", status: 400 };
@@ -96,7 +101,7 @@ export function validateQuoteRequest(input) {
       currency: String(input.currency || "USD").trim().toUpperCase() || "USD",
       customer,
       items,
-      notes: String(input.notes || "").slice(0, 2000),
+      notes: maskCardNumbers(String(input.notes || "").slice(0, 2000)), // audit 2026-10-02 (LF1 #388)
     },
   };
 }
@@ -137,6 +142,7 @@ export async function createQuote(input, deps) {
     items: parsed.value.items,
     notes: parsed.value.notes,
     session_id: String(input.session_id || input.sessionId || "").trim(),
+    ...orderAttribution(input), // infra 2026-09-30 order-attribution: price requests become CRM orders through card-import
     emailSent: false,
     emailError: null,
   };
